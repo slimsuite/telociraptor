@@ -1,0 +1,151 @@
+---
+title: "Telociraptor V0.5.0 Documentation"
+author: "Richard J. Edwards"
+date: "2023-05-01"
+output:
+  html_document:
+    css: http://www.slimsuite.unsw.edu.au/stylesheets/slimhtml.css
+    toc: true
+    toc_float: true
+    toc_collapsed: false
+    toc_depth: 3
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+<a name="Top" />
+
+
+# Telociraptor: Telomere Prediction and Genome Assembly Editing Tool
+
+Telociraptor is a renamed version of GenomeTweak that also has the capacity for standalone telomere prediction (as
+executed by Diploidocus) along with a combined `chromsyn=T` mode for generating the "telonull" telomere output and
+assembly gaps table used as input by [ChromSyn](https://github.com/slimsuite/chromsyn). The original GenomeTweak
+function is now invoked with `tweak=T`. If running in `tweak` mode, `telomeres` and/or `chromsyn` output will be
+executed on the `seqout=FILE` if generated, which will fixed version of the assembly if `autofix=T`.
+
+### ~ Telomere finding [telomeres=T] ~ ###
+
+Telociraptor performs a regex-based search for Telomeres, based on [FindTelomeres](https://github.com/JanaSperschneider/FindTelomeres).
+By default, this looks for a canonical telomere motif of TTAGGG/CCCTAA, allowing for some variation. Telociraptor
+searches for a forward telomere regex sequence of `C{2,4}T{1,2}A{1,3}` at the 5' end, and a reverse sequence at the
+3' end of `T{1,3}A{1,2}G{2,4}`. These can be set with `telofwd=X` and `telorev=X`. For each sequence, Telociraptor
+trims off any trailing Ns and then searches for telomere-like sequences at sequence ends. For each sequence, the
+presence/absence and length of trimming are reported for the 5' end (tel5 and trim5) and 3' end (tel3 and trim3),
+along with the total percentage telomeric sequence (TelPerc).
+
+Telomeres are marked if at least 50% (`teloperc=PERC`) of the terminal 50 bp (`telosize=INT`) matches the appropriate
+regex. If either end contains a telomere, the total percentage of the sequence matching either regex is calculated as
+TelPerc. Note that this number neither restricts matches to the termini, not includes sequences within predicted
+telomeres that do not match the regex. By default, only sequences with telomeres are output to the `*.telomeres.tdt`
+output, but switching `telonull=T` will output all sequences. This can be useful if you also need a table of sequence
+lengths, and is the recommended input for [ChromSyn](https://github.com/slimsuite/chromsyn).
+
+### ~ GenomeTweak mode [tweak=T] ~ ###
+
+GenomeTweak is a simple tool designed to help manual curation of genome assembly scaffolding. A genome assembly file
+is provided with `seqin=FILE`. If run with `mapout=FiLE` then an assembly map will be generated from this assembly
+file. If a `*.gaps.tdt` is found (or `gapfile=TDT`), this will be used for gap positions. Otherwise, `rje_seqlist`
+will generate the gaps file and use that. If `telofile=TDT` is provided, telomere positions for the contigs will be
+loaded in. (These must match elements of the assembly map.) If that file is missing, the assembly will be broken into
+contigs and telomere prediction run on the contigs to generate.
+
+If `mapin=FILE` is given, then GenomeTweak will generate a new assembly (`seqout=FILE` [`$BASEFILE.tweak.fasta]`)
+based on the map file and extracting sequences from the input assembly.
+
+The map format is as follows:
+
+```
+||NewName Description>>SeqName:Start-End:Strand|~GapLen~| ... |SeqName:Start-End:Strand<<
+```
+
+Where there is a full-length sequence, Start-End is not required:
+
+```
+||NewName Description>>SeqName|~GapLen~| ... |SeqName<<
+```
+
+Gaps can have zero length.
+
+If telomere predictions have been loaded from a table (must match SeqName exactly) then 5' and 3' telomeres will be
+annotated in the file with `{` and `}`:
+
+```
+||NewName Description>>{SeqName:Start-End:Strand|~GapLen~| ... |SeqName:Start-End:Strand}<<
+```
+
+## Citation
+
+Telociraptor has not yet been published. Please cite github in the meantime.
+
+---
+
+# Running Telociraptor
+
+Telociraptor is written in Python 2.x or Python 3.x and can be run directly from the commandline:
+
+    python $CODEPATH/telociraptor.py [OPTIONS]
+
+If running as part of [SLiMSuite](http://slimsuite.blogspot.com/), `$CODEPATH` will be the SLiMSuite `tools/`
+directory. If running from the standalone [Telociraptor git repo](https://github.com/slimsuite/telociraptor), `$CODEPATH`
+will be the path the to `code/` directory. Please see details in the [Telociraptor git repo](https://github.com/slimsuite/telociraptor)
+for running on example data.
+
+## Dependencies
+
+The main Telociraptor functions do not currently have any dependencies. To generate documentation with `dochtml`,
+R will need to be installed and a pandoc environment variable must be set, e.g.
+
+    export RSTUDIO_PANDOC=/Applications/RStudio.app/Contents/MacOS/pandoc
+
+For Telociraptor documentation, run with `dochtml=T` and read the `*.docs.html` file generated.
+
+## Commandline options
+
+A list of commandline options can be generated at run-time using the `-h` or `help` flags. Please see the general
+[SLiMSuite documentation](http://slimsuite.blogspot.com/2013/08/command-line-options.html) for details of how to
+use commandline options, including setting default values with **INI files**.
+
+```
+### ~ Main Telociraptor run options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+seqin=FILE      : Input sequence assembly [None]
+basefile=FILE   : Root of output file names [$SEQINBASE]
+tweak=T/F       : Whether to execute GenomeTweak pipeline [False]
+chromsyn=T/F    : Whether to execute ChromSyn preparation (gaps.tdt and telonull telomere prediction) [False]
+dochtml=T/F     : Generate HTML Telociraptor documentation (*.docs.html) instead of main run [False]
+### ~ Telomere options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+telomeres=T/F   : Whether to generate telomere predictions [True]
+telonull=T/F    : Whether to output sequences without telomeres to telomere table [False]
+telofile=TDT    : Delimited file of `seqname seqlen tel5 tel3` [$SEQINBASE.telomeres.tdt]
+telofwd=X       : Regex for 5' telomere sequence search [C{2,4}T{1,2}A{1,3}]
+telorev=X       : Regex for 5' telomere sequence search [T{1,3}A{1,2}G{2,4}]
+telosize=INT    : Size of terminal regions (bp) to scan for telomeric repeats [50]
+teloperc=PERC   : Percentage of telomeric region matching telomeric repeat to call as telomere [50]
+### ~ Genome Tweak run options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+seqout=FILE     : Output sequence filename [$BASEFILE.tweak.fasta]
+mapin=FILE      : Text file input for genome assembly map [None]
+mapout=FILE     : Text file output for genome assembly map [$BASEFILE.ctgmap.txt]
+gapfile=TDT     : Delimited file of `seqname start end seqlen gaplen` [$SEQINBASE.gaps.tdt]
+autofix=T/F     : Whether to try to fix terminal inversions based on telomere predictions [True]
+fixout=FILE     : Text file output for auto-fixed genome assembly map [$BASEFILE.tweak.txt]
+invert=LIST     : List of contigs/regions to invert (in order) []
+invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
+trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
+### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+```
+
+# Telociraptor workflow and options
+
+Details of the Telociraptor workflow will be added with time. Please contact the author or raise an issue on
+GitHub if you have any questions.
+
+
+
+
+<br>
+<small>&copy; 2023 Richard Edwards | rich.edwards@uwa.edu.au</small>
