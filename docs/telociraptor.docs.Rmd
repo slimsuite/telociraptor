@@ -1,7 +1,7 @@
 ---
 title: "Telociraptor V0.5.0 Documentation"
 author: "Richard J. Edwards"
-date: "2023-05-01"
+date: "2023-05-04"
 output:
   html_document:
     css: http://www.slimsuite.unsw.edu.au/stylesheets/slimhtml.css
@@ -23,11 +23,17 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Telociraptor: Telomere Prediction and Genome Assembly Editing Tool
 
-Telociraptor is a renamed version of GenomeTweak that also has the capacity for standalone telomere prediction (as
-executed by Diploidocus) along with a combined `chromsyn=T` mode for generating the "telonull" telomere output and
-assembly gaps table used as input by [ChromSyn](https://github.com/slimsuite/chromsyn). The original GenomeTweak
-function is now invoked with `tweak=T`. If running in `tweak` mode, `telomeres` and/or `chromsyn` output will be
-executed on the `seqout=FILE` if generated, which will fixed version of the assembly if `autofix=T`.
+Telociraptor is a genome assembly editing tool that combined the standalone telomere prediction functions from 
+[Diploidocus](https://github.com/slimsuite/diploidocus) with some simple genome assembly scaffolding functions that
+were originally packaged up as "GenomeTweak". Telociraptor predicts telomeres at the end of assembly scaffolds, 
+where (by default) at least 50% of the terminal 50 bp matches the telomere regex provided. This approach is based
+on [FindTelomeres](https://github.com/JanaSperschneider/FindTelomeres) by Jana Sperschneider. In addition, 
+Telociraptor will generate a simple text assembly map (see below) with contig positions and gap lengths. 
+By default, Telomere predictions are also made for each contig, and internal telomeres marked in the map. Finally,
+Telociraptor will try to fix scaffolding errors based on telomere predictions, either inverting or trimming the
+ends of scaffolds (see below). Alternatively, the assembly map can be manually edited/generated and used to 
+create a new fasta file from an existing assembly. As an extra bonus, Telociraptor will generate the "telonull" 
+telomere output and assembly gaps table used as input by [ChromSyn](https://github.com/slimsuite/chromsyn). 
 
 ### ~ Telomere finding [telomeres=T] ~ ###
 
@@ -48,7 +54,7 @@ lengths, and is the recommended input for [ChromSyn](https://github.com/slimsuit
 
 ### ~ GenomeTweak mode [tweak=T] ~ ###
 
-GenomeTweak is a simple tool designed to help manual curation of genome assembly scaffolding. A genome assembly file
+GenomeTweak was a simple tool designed to help manual curation of genome assembly scaffolding. A genome assembly file
 is provided with `seqin=FILE`. If run with `mapout=FiLE` then an assembly map will be generated from this assembly
 file. If a `*.gaps.tdt` is found (or `gapfile=TDT`), this will be used for gap positions. Otherwise, `rje_seqlist`
 will generate the gaps file and use that. If `telofile=TDT` is provided, telomere positions for the contigs will be

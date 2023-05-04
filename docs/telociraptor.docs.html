@@ -11,7 +11,7 @@
 
 <meta name="author" content="Richard J. Edwards" />
 
-<meta name="date" content="2023-05-01" />
+<meta name="date" content="2023-05-04" />
 
 <title>Telociraptor V0.5.0 Documentation</title>
 
@@ -244,7 +244,7 @@ div.tocify {
 
 <h1 class="title toc-ignore">Telociraptor V0.5.0 Documentation</h1>
 <h4 class="author">Richard J. Edwards</h4>
-<h4 class="date">2023-05-01</h4>
+<h4 class="date">2023-05-04</h4>
 
 </div>
 
@@ -252,7 +252,7 @@ div.tocify {
 <p><a name="Top"></a></p>
 <div id="telociraptor-telomere-prediction-and-genome-assembly-editing-tool" class="section level1" number="1">
 <h1 number="1"><span class="header-section-number">1</span> Telociraptor: Telomere Prediction and Genome Assembly Editing Tool</h1>
-<p>Telociraptor is a renamed version of GenomeTweak that also has the capacity for standalone telomere prediction (as executed by Diploidocus) along with a combined <code>chromsyn=T</code> mode for generating the “telonull” telomere output and assembly gaps table used as input by <a href="https://github.com/slimsuite/chromsyn">ChromSyn</a>. The original GenomeTweak function is now invoked with <code>tweak=T</code>. If running in <code>tweak</code> mode, <code>telomeres</code> and/or <code>chromsyn</code> output will be executed on the <code>seqout=FILE</code> if generated, which will fixed version of the assembly if <code>autofix=T</code>.</p>
+<p>Telociraptor is a genome assembly editing tool that combined the standalone telomere prediction functions from <a href="https://github.com/slimsuite/diploidocus">Diploidocus</a> with some simple genome assembly scaffolding functions that were originally packaged up as “GenomeTweak”. Telociraptor predicts telomeres at the end of assembly scaffolds, where (by default) at least 50% of the terminal 50 bp matches the telomere regex provided. This approach is based on <a href="https://github.com/JanaSperschneider/FindTelomeres">FindTelomeres</a> by Jana Sperschneider. In addition, Telociraptor will generate a simple text assembly map (see below) with contig positions and gap lengths. By default, Telomere predictions are also made for each contig, and internal telomeres marked in the map. Finally, Telociraptor will try to fix scaffolding errors based on telomere predictions, either inverting or trimming the ends of scaffolds (see below). Alternatively, the assembly map can be manually edited/generated and used to create a new fasta file from an existing assembly. As an extra bonus, Telociraptor will generate the “telonull” telomere output and assembly gaps table used as input by <a href="https://github.com/slimsuite/chromsyn">ChromSyn</a>.</p>
 <div id="telomere-finding-telomerest" class="section level3" number="1.0.1">
 <h3 number="1.0.1"><span class="header-section-number">1.0.1</span> ~ Telomere finding [telomeres=T] ~</h3>
 <p>Telociraptor performs a regex-based search for Telomeres, based on <a href="https://github.com/JanaSperschneider/FindTelomeres">FindTelomeres</a>. By default, this looks for a canonical telomere motif of TTAGGG/CCCTAA, allowing for some variation. Telociraptor searches for a forward telomere regex sequence of <code>C{2,4}T{1,2}A{1,3}</code> at the 5’ end, and a reverse sequence at the 3’ end of <code>T{1,3}A{1,2}G{2,4}</code>. These can be set with <code>telofwd=X</code> and <code>telorev=X</code>. For each sequence, Telociraptor trims off any trailing Ns and then searches for telomere-like sequences at sequence ends. For each sequence, the presence/absence and length of trimming are reported for the 5’ end (tel5 and trim5) and 3’ end (tel3 and trim3), along with the total percentage telomeric sequence (TelPerc).</p>
@@ -260,7 +260,7 @@ div.tocify {
 </div>
 <div id="genometweak-mode-tweakt" class="section level3" number="1.0.2">
 <h3 number="1.0.2"><span class="header-section-number">1.0.2</span> ~ GenomeTweak mode [tweak=T] ~</h3>
-<p>GenomeTweak is a simple tool designed to help manual curation of genome assembly scaffolding. A genome assembly file is provided with <code>seqin=FILE</code>. If run with <code>mapout=FiLE</code> then an assembly map will be generated from this assembly file. If a <code>*.gaps.tdt</code> is found (or <code>gapfile=TDT</code>), this will be used for gap positions. Otherwise, <code>rje_seqlist</code> will generate the gaps file and use that. If <code>telofile=TDT</code> is provided, telomere positions for the contigs will be loaded in. (These must match elements of the assembly map.) If that file is missing, the assembly will be broken into contigs and telomere prediction run on the contigs to generate.</p>
+<p>GenomeTweak was a simple tool designed to help manual curation of genome assembly scaffolding. A genome assembly file is provided with <code>seqin=FILE</code>. If run with <code>mapout=FiLE</code> then an assembly map will be generated from this assembly file. If a <code>*.gaps.tdt</code> is found (or <code>gapfile=TDT</code>), this will be used for gap positions. Otherwise, <code>rje_seqlist</code> will generate the gaps file and use that. If <code>telofile=TDT</code> is provided, telomere positions for the contigs will be loaded in. (These must match elements of the assembly map.) If that file is missing, the assembly will be broken into contigs and telomere prediction run on the contigs to generate.</p>
 <p>If <code>mapin=FILE</code> is given, then GenomeTweak will generate a new assembly (<code>seqout=FILE</code> [<code>$BASEFILE.tweak.fasta]</code>) based on the map file and extracting sequences from the input assembly.</p>
 <p>The map format is as follows:</p>
 <pre><code>||NewName Description&gt;&gt;SeqName:Start-End:Strand|~GapLen~| ... |SeqName:Start-End:Strand&lt;&lt;</code></pre>
