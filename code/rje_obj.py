@@ -1036,11 +1036,12 @@ class RJE_Object(object):     ### Metaclass for inheritance by other classes
                 sourcefile = nowfile
                 rje.urlToFile(sourceurl,nowfile,self,backupfile=False)
                 sentry['Status'] = 'Downloaded'
-            elif download and str == 'TaxMap':
+            elif download and str in ['TaxMap','NameMap','SpecFile']:
                 try:
-                    sourcefile = nowfile
                     datecode = rje.dateTime(dateonly=True)
-                    taxdump = '%staxdump.%s.tar.gz' % (self.getStr('SourcePath'),datecode)
+                    taxdump = sourcefile
+                    if str in ['TaxMap','NameMap']:
+                        taxdump = '%staxdump.%s.tar.gz' % (self.getStr('SourcePath'),datecode)
                     #rje.urlToFile(sourceurl,taxdump,self)
                     #self.debug(sourceurl)
                     if self.force() or not rje.exists(taxdump):
@@ -1050,16 +1051,20 @@ class RJE_Object(object):     ### Metaclass for inheritance by other classes
                             os.rename('taxdump.tar.gz',taxdump)
                         elif self.getBool('Win32'): self.warnLog('Cannnot use wget with Win32=T'); raise ValueError
                         else: os.system("wget -O %s %s" % (taxdump,sourceurl))
-                    sentry['Status'] = 'Downloaded TarGZ'
-                    predump = glob.glob('*.*')
-                    self.printLog('#TARGZ','tar -xzf %s' % taxdump)
-                    os.system('tar -xzf %s' % taxdump)
-                    for dfile in glob.glob('*.*')[0:]:
-                        if dfile in predump: continue
-                        fileparts = os.path.splitext(dfile)
-                        datefile = '%s%s.%s%s' % (self.getStr('SourcePath'),fileparts[0],datecode,fileparts[1])
-                        os.rename(dfile,datefile)
-                    sentry['Status'] = 'Downloaded'
+                    if taxdump.endswith('.tar.gx'):
+                        sentry['Status'] = 'Downloaded TarGZ'
+                        predump = glob.glob('*.*')
+                        self.printLog('#TARGZ','tar -xzf %s' % taxdump)
+                        os.system('tar -xzf %s' % taxdump)
+                        for dfile in glob.glob('*.*')[0:]:
+                            if dfile in predump: continue
+                            fileparts = os.path.splitext(dfile)
+                            datefile = '%s%s.%s%s' % (self.getStr('SourcePath'),fileparts[0],datecode,fileparts[1])
+                            os.rename(dfile,datefile)
+                        sentry['Status'] = 'Downloaded'
+                    else:
+                        os.rename(sourcefile,nowfile)
+                        sentry['Status'] = 'Downloaded'
                 except: self.errorLog('Problem processing NCBI Taxa download')
             elif download and sourceurl:
                 sourcefile = nowfile

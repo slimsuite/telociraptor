@@ -19,8 +19,8 @@
 """
 Module:       Telociraptor
 Description:  Telomere Prediction and Genome Assembly Editing Tool
-Version:      0.5.0
-Last Edit:    30/04/23
+Version:      0.6.0
+Last Edit:    09/05/23
 Copyright (C) 2021  Richard J. Edwards - See source code for GNU License Notice
 
 Function:
@@ -74,7 +74,27 @@ Function:
 
     ||NewName Description>>{SeqName:Start-End:Strand|~GapLen~| ... |SeqName:Start-End:Strand}<<
 
+    GenomeTweak mode can also be used for some direct auto-correction of genome assemblies (`autofix=T`), producing
+    `*.tweak.*` output (or `seqout=FILE` and `fixout=FILE` for the assembly and assembly map, respectively). This goes
+    through up to four editing cycles, depending on input settings:
 
+    1. Removal of any contigs given by `badcontig=LIST` and `descaffold=LIST`. The former will be entirely removed from
+    the assembly (e.g. contigs that have been identified by DepthKopy as lacking sequence coverage), whilst the latter
+    will be excised from scaffolds but left in the assembly as a contig. (These can be comma separated lists, or text
+    files containing one contig per line.) If removed, the downstream gap will also be removed, unless it is the 3'
+    end contig, in which case the upstream gap will be removed.
+
+    2. Any regions in the MapIn file flanked by `/` characters (`/../`) will be inverted.
+
+    3. Contigs and regions provided by `invert=LIST` will be inverted. These are searched directly in the sequence
+    map and can either be direct matches, or have an internal `..` that will map onto any internal sequence map
+    elements. In this case, the entire chunk including the intervening region will be inverted.
+
+    4. Finally, each sequence is considered in term and assessed with respect to internal telomere positions. First,
+    end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
+    (b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
+    where there is an outward-facing telomere within `trimlimit=INT` bp of the end. Where a possible inversion or
+    trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
 
 Commandline:
     ### ~ Main Telociraptor run options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
@@ -98,6 +118,8 @@ Commandline:
     gapfile=TDT     : Delimited file of `seqname start end seqlen gaplen` [$SEQINBASE.gaps.tdt]
     autofix=T/F     : Whether to try to fix terminal inversions based on telomere predictions [True]
     fixout=FILE     : Text file output for auto-fixed genome assembly map [$BASEFILE.tweak.txt]
+    badcontig=LIST  : List of contigs to completely remove from the assembly (prior to inversion) []
+    descaffold=LIST : List of contigs to remove from scaffolds but keep in assembly (prior to inversion) []
     invert=LIST     : List of contigs/regions to invert (in order) []
     invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
     trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
@@ -122,6 +144,7 @@ def history():  ### Program History - only a method for PythonWin collapsing! ##
     # 0.4.0 - Upgraded invert=LIST to List of contigs/regions to invert (in order). Added /../ inversion formatting.
     # 0.4.1 - Fixed a bug when sequences have descriptions.
     # 0.5.0 - Added limit for end-trimming and split fixlimit into invlimit and trimlimit.
+    # 0.6.0 - Added badcontigs=LIST and descaffold=LIST for removing or descaffolding contigs. Fixed trim bug.
     '''
 #########################################################################################################################
 def todo():     ### Major Functionality to Add - only a method for PythonWin collapsing! ###
@@ -148,7 +171,7 @@ def todo():     ### Major Functionality to Add - only a method for PythonWin col
 #########################################################################################################################
 def makeInfo(): ### Makes Info object which stores program details, mainly for initial print to screen.
     '''Makes Info object which stores program details, mainly for initial print to screen.'''
-    (program, version, last_edit, copy_right) = ('Telociraptor', '0.5.0', 'April 2023', '2023')
+    (program, version, last_edit, copy_right) = ('Telociraptor', '0.6.0', 'May 2023', '2023')
     description = 'Telomere Prediction and Genome Assembly Editing Tool'
     author = 'Dr Richard J. Edwards.'
     comments = ['This program is still in development and has not been published.',rje_obj.zen()]
@@ -238,6 +261,8 @@ class GenomeTweak(rje_readcore.ReadCore):
     File:file handles with matching str filenames
     
     List:list
+    - BadContig=LIST  : List of contigs to completely remove from the assembly (prior to inversion) []
+    - Descaffold=LIST : List of contigs to remove from scaffolds but keep in assembly (prior to inversion) []
     - Invert=LIST     : List of contigs to invert []
 
     Dict:dictionary    
@@ -256,7 +281,7 @@ class GenomeTweak(rje_readcore.ReadCore):
         self.intlist = ['InvLimit','TeloSize','TrimLimit']
         self.numlist = ['TeloPerc']
         self.filelist = []
-        self.listlist = ['Invert']
+        self.listlist = ['BadContig','Descaffold','Invert']
         self.dictlist = []
         self.objlist = ['SeqIn']
         ### ~ Defaults ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
@@ -289,7 +314,7 @@ class GenomeTweak(rje_readcore.ReadCore):
                 self._cmdReadList(cmd,'perc',['TeloPerc'])  # Percentage, converts to 1-100 scale.
                 #self._cmdReadList(cmd,'min',['Att'])   # Integer value part of min,max command
                 #self._cmdReadList(cmd,'max',['Att'])   # Integer value part of min,max command
-                self._cmdReadList(cmd,'list',['Invert'])  # List of strings (split on commas or file lines)
+                self._cmdReadList(cmd,'list',['BadContig','Descaffold','Invert'])  # List of strings (split on commas or file lines)
                 #self._cmdReadList(cmd,'clist',['Att']) # Comma separated list as a *string* (self.str)
                 #self._cmdReadList(cmd,'glist',['Att']) # List of files using wildcards and glob
                 #self._cmdReadList(cmd,'cdict',['Att']) # Splits comma separated X:Y pairs into dictionary
@@ -367,6 +392,28 @@ class GenomeTweak(rje_readcore.ReadCore):
         ||NewName Description>>{SeqName:Start-End:Strand|~GapLen~| ... |SeqName:Start-End:Strand}<<
         ```
 
+        GenomeTweak mode can also be used for some direct auto-correction of genome assemblies (`autofix=T`), producing
+        `*.tweak.*` output (or `seqout=FILE` and `fixout=FILE` for the assembly and assembly map, respectively). This goes
+        through up to four editing cycles, depending on input settings:
+
+        1. Removal of any contigs given by `badcontig=LIST` and `descaffold=LIST`. The former will be entirely removed from
+        the assembly (e.g. contigs that have been identified by DepthKopy as lacking sequence coverage), whilst the latter
+        will be excised from scaffolds but left in the assembly as a contig. (These can be comma separated lists, or text
+        files containing one contig per line.) If removed, the downstream gap will also be removed, unless it is the 3'
+        end contig, in which case the upstream gap will be removed.
+
+        2. Any regions in the MapIn file flanked by `/` characters (`/../`) will be inverted.
+
+        3. Contigs and regions provided by `invert=LIST` will be inverted. These are searched directly in the sequence
+        map and can either be direct matches, or have an internal `..` that will map onto any internal sequence map
+        elements. In this case, the entire chunk including the intervening region will be inverted.
+
+        4. Finally, each sequence is considered in term and assessed with respect to internal telomere positions. First,
+        end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
+        (b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
+        where there is an outward-facing telomere within `trimlimit=INT` bp of the end. Where a possible inversion or
+        trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
+
         ## Citation
 
         Telociraptor has not yet been published. Please cite github in the meantime.
@@ -421,6 +468,8 @@ class GenomeTweak(rje_readcore.ReadCore):
         gapfile=TDT     : Delimited file of `seqname start end seqlen gaplen` [$SEQINBASE.gaps.tdt]
         autofix=T/F     : Whether to try to fix terminal inversions based on telomere predictions [True]
         fixout=FILE     : Text file output for auto-fixed genome assembly map [$BASEFILE.tweak.txt]
+        badcontig=LIST  : List of contigs to completely remove from the assembly (prior to inversion) []
+        descaffold=LIST : List of contigs to remove from scaffolds but keep in assembly (prior to inversion) []
         invert=LIST     : List of contigs/regions to invert (in order) []
         invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
         trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
@@ -681,7 +730,28 @@ class GenomeTweak(rje_readcore.ReadCore):
 #########################################################################################################################
     def autoFix(self): ### Loads the MapIn file and checks it using fixlimit and invert=LIST.
         '''
-        Loads the MapIn file and checks it using fixlimit and invert=LIST.
+        GenomeTweak mode can also be used for some direct auto-correction of genome assemblies (`autofix=T`), producing
+        `*.tweak.*` output (or `seqout=FILE` and `fixout=FILE` for the assembly and assembly map, respectively). This goes
+        through up to four editing cycles, depending on input settings:
+
+        1. Removal of any contigs given by `badcontig=LIST` and `descaffold=LIST`. The former will be entirely removed from
+        the assembly (e.g. contigs that have been identified by DepthKopy as lacking sequence coverage), whilst the latter
+        will be excised from scaffolds but left in the assembly as a contig. (These can be comma separated lists, or text
+        files containing one contig per line.) If removed, the downstream gap will also be removed, unless it is the 3'
+        end contig, in which case the upstream gap will be removed.
+
+        2. Any regions in the MapIn file flanked by `/` characters (`/../`) will be inverted.
+
+        3. Contigs and regions provided by `invert=LIST` will be inverted. These are searched directly in the sequence
+        map and can either be direct matches, or have an internal `..` that will map onto any internal sequence map
+        elements. In this case, the entire chunk including the intervening region will be inverted.
+
+        4. Finally, each sequence is considered in term and assessed with respect to internal telomere positions. First,
+        end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
+        (b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
+        where there is an outward-facing telomere within `trimlimit=INT` bp of the end. Where a possible inversion or
+        trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
+
         '''
         try:### ~ [1] ~ Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
             maplist = open(self.getStr('MapIn'),'r').read()
@@ -695,21 +765,63 @@ class GenomeTweak(rje_readcore.ReadCore):
 
             ### ~ [2] ~ Generate new map ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
             modified = False
-            fixlist = []
-            ## ~ [2a] Inversions from /../ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
-            ix = 0
+            fixlist = []    # List of updated map elements to output
+
+            ## ~ [2a] Bad contigs and descaffolding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            newmaplist = []
+            for m, newseq in enumerate(maplist):
+                [newname, seqmap] = newseq.split('>>')
+                inmap = seqmap
+                seqmap = seqmap.split('|')
+                newseqmap = [] # Updated sequence map
+                descaff = []   # List of descaffolded contigs to be added to end of map
+                bx = 0; dx = 0; gx = 0
+                for i, mapel in enumerate(seqmap):
+                    mapctg = mapel.strip('{}')
+                    if mapctg[-2:] in [':+',':-']: mapctg = mapctg[:-2]
+                    if mapctg in self.list['BadContig']:  # Remove contig
+                        bx += 1
+                        continue
+                    if mapctg in self.list['Descaffold']:  # Remove contig from scaffold
+                        mdata = self.mapElementData(mapel)
+                        descaff.append('||{0}.{1}-{2}>>{3}'.format(mdata[0], mdata[1], mdata[2], mapel))
+                        dx += 1
+                        continue
+                    if mapel.startswith('~') and i > 0:
+                        if not newseqmap or seqmap[i-1] != newseqmap[-1]:   # Previous contig trimmed
+                            gx += 1
+                            continue
+                    newseqmap.append(mapel)
+                if newseqmap and len(seqmap) > 1 and newseqmap[-1].startswith('~') and newseqmap[-1] != seqmap[-1]:
+                    newseqmap = newseqmap[:-1]  # Trim trailing gap
+                    gx += 1
+                newseqmap = '|'.join(newseqmap)
+                newmaplist.append('{0}>>{1}'.format(newname, newseqmap))
+                if newseqmap != inmap:
+                    modified = True
+                    self.printLog('#CTGFIX','{0}: {1} bad contig(s) removed; {2} descaffolded; {3} gaps removed'.format(newname,bx,dx,gx))
+                elif (bx + dx + gx) > 0:
+                    raise ValueError('Contig fix mismatch!')
+                if descaff:
+                    newmaplist = newmaplist + descaff
+                    self.printLog('#CTGFIX','Added {0} descaffolded contigs following {1}'.format(len(descaff),newname))
+            maplist = newmaplist
+
+            ## ~ [2b] Inversions from /../ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            ix = 0; invlen = 0
             seqmap = '<<'.join(maplist)
             while rje.matchExp('/([^/]+)/',seqmap):
                 invhit = rje.matchExp('/([^/]+)/',seqmap)
+                invlen += self.mapLength(invhit[0])
                 invmap = self.invertRegion(invhit[0])
                 self.printLog('#INVERT', '{0} -> {1}'.format(invhit[0], invmap))
                 seqmap = seqmap.replace('/{0}/'.format(invhit[0]), invmap)
                 modified = True
                 ix += 1
             if ix:
-                self.printLog('#INVERT','{0} inversions from /../ regions in contig map.'.format(ix))
+                self.printLog('#INVERT','{0} inversions ({1}) from /../ regions in contig map.'.format(ix,rje_seqlist.dnaLen(invlen)))
 
-            ## ~ [2b] Inversions from list ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            ## ~ [2c] Inversions from list ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
             ix = 0
             for invreg in self.list['Invert']:
                 invreg = invreg.replace('+','\+')
@@ -734,33 +846,12 @@ class GenomeTweak(rje_readcore.ReadCore):
                 self.printLog('#INVERT','{0} inversions from input list of {1} invert=LIST regions.'.format(ix,len(self.list['Invert'])))
             maplist = seqmap.split('<<')
 
-            ## ~ [2c] Process each sequence and look for telomere-based edits ~~~~~~~~~~~~~~~~~~~~~ ##
+            ## ~ [2d] Process each sequence and look for telomere-based edits ~~~~~~~~~~~~~~~~~~~~~ ##
             for newseq in maplist:
                 [newname,seqmap] = newseq.split('>>')
                 if newname[:2] == '||': newname = newname[2:]
                 inmap = seqmap
                 seqlen = self.mapLength(seqmap)
-
-                # Inversions
-                # seqmap = seqmap.split('|')
-                # for i, mapel in enumerate(seqmap):
-                #     maptel = [False,False]
-                #     if mapel[:1] == '{': mapel = mapel[1:]; maptel[0] = True
-                #     if mapel[-1:] == '}': mapel = mapel[:-1]; maptel[1] = False
-                #     if ':' in mapel or mapel in seqdict.keys():
-                #         mdata = mapel.split(':')
-                #         if mdata[0] in self.list['Invert'] or ':'.join(mdata[:2]) in self.list['Invert'] or '.'.join(mdata[:2]) in self.list['Invert']:
-                #             newseqmap = ''
-                #             if maptel[1]: newseqmap = newseqmap + '{'
-                #             if mdata[-1] == '+': mdata[-1] = '-'
-                #             elif mdata[-1] == '-': mdata[-1] = '+'
-                #             else: mdata.append('-')
-                #             newseqmap = newseqmap + ':'.join(mdata)
-                #             if maptel[0]: newseqmap = newseqmap + '}'
-                #             self.printLog('#INVERT','{0} -> {1}'.format(seqmap[i], newseqmap))
-                #             seqmap[i] = newseqmap
-                #             ix += 1
-                # seqmap = ('|').join(seqmap)
 
                 # Look for 5' inversion
                 fixlimit = self.getInt('InvLimit')
@@ -780,15 +871,13 @@ class GenomeTweak(rje_readcore.ReadCore):
                         invchunk.reverse()
                         for i, mapel in enumerate(invchunk):
                             newchunk.append(self.invertElement(mapel))
-                            # Old gap representation:
-                            #if rje.isEven(i): newchunk.append(self.invertElement(mapel))
-                            #else: newchunk.append(mapel)
                         newseqmap = '|'.join(newchunk) + keepchunk
-                        self.printLog('#INVTEL','{0}... -> {1}...'.format(seqmap[:tel3 + 10], newseqmap[:tel3 + 10]))
+                        self.printLog('#INVTEL','Inverted 5\' of {0} {1}'.format(newname.split()[0],lentxt))
+                        self.printLog('#DETAIL','{0}... -> {1}...'.format(seqmap[:tel3 + 10], newseqmap[:tel3 + 10]))
                         seqmap = newseqmap
                         modified = True
                     else:
-                        self.printLog('#INVTEL','Note: might want to invert 5\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[tel3 + 1:],lentxt))
+                        self.printLog('#NOTE','Note: might want to invert 5\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[tel3 + 1:],lentxt))
 
                 # Look for 3' inversion
                 tel5 = seqmap.rfind('{')    # Whether 5' telomere reached
@@ -807,21 +896,19 @@ class GenomeTweak(rje_readcore.ReadCore):
                         invchunk.reverse()
                         for i, mapel in enumerate(invchunk):
                             newchunk.append(self.invertElement(mapel))
-                            # Old gap representation:
-                            #if rje.isEven(i): newchunk.append(self.invertElement(mapel))
-                            #else: newchunk.append(mapel)
                         newseqmap = keepchunk + '|'.join(newchunk)
                         teli = max(0,tel5-10)
-                        self.printLog('#INVTEL','...{0} -> ...{1}'.format(seqmap[teli:], newseqmap[teli:]))
+                        self.printLog('#INVTEL','Inverted 3\' {0} {1}'.format(newname.split()[0],lentxt))
+                        self.printLog('#DETAIL','...{0} -> ...{1}'.format(seqmap[teli:], newseqmap[teli:]))
                         seqmap = newseqmap
                         modified = True
                     else:
-                        self.printLog('#INVTEL','Note: might want to invert 3\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[tel5:],lentxt))
+                        self.printLog('#NOTE','Note: might want to invert 3\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[tel5:],lentxt))
 
                 # Look for ends to trim off - within fixlimit=INT
                 fixlimit = self.getInt('TrimLimit')
-                tel5 = seqmap.rfind('{')    # Whether 5' telomere reached
-                tel3 = seqmap.rfind('}')    # Whether 3' telomere reached
+                tel5 = seqmap.find('{')    # Whether 5' telomere reached
+                tel3 = seqmap.find('}')    # Whether 3' telomere reached
                 if tel5 > 0 and (tel3 > tel5 or tel3 < 0):
                     trimchunk = seqmap[:tel5+1]
                     trimlen = self.mapLength(trimchunk)
@@ -829,7 +916,8 @@ class GenomeTweak(rje_readcore.ReadCore):
                     if fixlimit <= 100 and (100 * float(trimlen) / seqlen) > fixlimit: trimchunk = ''
                     if fixlimit > 100 and trimlen > fixlimit: trimchunk = ''
                     if trimchunk:
-                        self.printLog('#TRIM','Trim 5\' of {0}: {1}'.format(newname.split()[0],trimchunk))
+                        self.printLog('#TRIM','Trimmed 5\' of {0} {1}'.format(newname.split()[0],lentxt))
+                        self.printLog('#DETAIL','Trim 5\' of {0}: {1}'.format(newname.split()[0],trimchunk))
                         seqmap = seqmap[tel5:]
                         for mapel in trimchunk[:tel5].split('|'):
                             if not mapel: continue
@@ -838,9 +926,9 @@ class GenomeTweak(rje_readcore.ReadCore):
                                 fixlist.append('||{0}.{1}-{2}>>{3}<<'.format(mdata[0],mdata[1],mdata[2],mapel))
                                 modified = True
                     else:
-                        self.printLog('#TRIM','Note: might want to trim 5\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[:tel5+1],lentxt))
-                tel5 = seqmap.find('{')    # Whether 5' telomere reached
-                tel3 = seqmap.find('}')    # Whether 3' telomere reached
+                        self.printLog('#NOTE','Note: might want to trim 5\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[:tel5+1],lentxt))
+                tel5 = seqmap.rfind('{')    # Whether 5' telomere reached
+                tel3 = seqmap.rfind('}')    # Whether 3' telomere reached
                 endlist = []
                 if tel3 < (len(seqmap) - 1) and tel3 > tel5:
                     trimchunk = seqmap[tel3:]
@@ -849,7 +937,8 @@ class GenomeTweak(rje_readcore.ReadCore):
                     if fixlimit <= 100 and (100 * float(trimlen) / seqlen) > fixlimit: trimchunk = ''
                     if fixlimit > 100 and trimlen > fixlimit: trimchunk = ''
                     if trimchunk:
-                        self.printLog('#TRIM','Trim 3\' of {0}: {1}'.format(newname.split()[0],trimchunk))
+                        self.printLog('#TRIM','Trimmed 3\' of {0} {1}'.format(newname.split()[0],lentxt))
+                        self.printLog('#DETAIL','Trim 3\' of {0}: {1}'.format(newname.split()[0],trimchunk))
                         seqmap = seqmap[:tel3+1]
                         for mapel in trimchunk[1:].split('|'):
                             if not mapel: continue
@@ -858,7 +947,7 @@ class GenomeTweak(rje_readcore.ReadCore):
                                 endlist.append('||{0}.{1}-{2}>>{3}<<'.format(mdata[0], mdata[1], mdata[2], mapel))
                                 modified = True
                     else:
-                        self.printLog('#TRIM','Note: might want to trim 3\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[tel3:],lentxt))
+                        self.printLog('#NOTE','Note: might want to trim 3\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[tel3:],lentxt))
 
                 fixlist.append('||{0}>>{1}<<'.format(newname,seqmap))
                 if endlist: fixlist = fixlist + endlist

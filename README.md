@@ -1,7 +1,7 @@
 # Telociraptor: Telomere Prediction and Genome Assembly Editing Tool
 
 ```
-Telociraptor v0.5.0
+Telociraptor v0.6.0
 ```
 
 For a better rendering and navigation of this document, please download and open [`./docs/telociraptor.docs.html`](./docs/telociraptor.docs.html), or visit <https://slimsuite.github.io/telociraptor/>.
@@ -71,6 +71,28 @@ annotated in the file with `{` and `}`:
 ||NewName Description>>{SeqName:Start-End:Strand|~GapLen~| ... |SeqName:Start-End:Strand}<<
 ```
 
+GenomeTweak mode can also be used for some direct auto-correction of genome assemblies (`autofix=T`), producing
+`*.tweak.*` output (or `seqout=FILE` and `fixout=FILE` for the assembly and assembly map, respectively). This goes
+through up to four editing cycles, depending on input settings:
+
+1. Removal of any contigs given by `badcontig=LIST` and `descaffold=LIST`. The former will be entirely removed from
+the assembly (e.g. contigs that have been identified by DepthKopy as lacking sequence coverage), whilst the latter
+will be excised from scaffolds but left in the assembly as a contig. (These can be comma separated lists, or text
+files containing one contig per line.) If removed, the downstream gap will also be removed, unless it is the 3'
+end contig, in which case the upstream gap will be removed.
+
+2. Any regions in the MapIn file flanked by `/` characters (`/../`) will be inverted.
+
+3. Contigs and regions provided by `invert=LIST` will be inverted. These are searched directly in the sequence
+map and can either be direct matches, or have an internal `..` that will map onto any internal sequence map
+elements. In this case, the entire chunk including the intervening region will be inverted.
+
+4. Finally, each sequence is considered in term and assessed with respect to internal telomere positions. First,
+end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
+(b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
+where there is an outward-facing telomere within `trimlimit=INT` bp of the end. Where a possible inversion or
+trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
+
 ## Citation
 
 Telociraptor has not yet been published. Please cite github in the meantime.
@@ -125,6 +147,8 @@ mapout=FILE     : Text file output for genome assembly map [$BASEFILE.ctgmap.txt
 gapfile=TDT     : Delimited file of `seqname start end seqlen gaplen` [$SEQINBASE.gaps.tdt]
 autofix=T/F     : Whether to try to fix terminal inversions based on telomere predictions [True]
 fixout=FILE     : Text file output for auto-fixed genome assembly map [$BASEFILE.tweak.txt]
+badcontig=LIST  : List of contigs to completely remove from the assembly (prior to inversion) []
+descaffold=LIST : List of contigs to remove from scaffolds but keep in assembly (prior to inversion) []
 invert=LIST     : List of contigs/regions to invert (in order) []
 invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
 trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]

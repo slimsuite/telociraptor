@@ -19,8 +19,8 @@
 """
 Module:       rje
 Description:  Contains SLiMSuite and Sequite General Objects
-Version:      4.24.2
-Last Edit:    27/03/23
+Version:      4.24.3
+Last Edit:    09/05/23
 Copyright (C) 2005  Richard J. Edwards - See source code for GNU License Notice
 
 Function:
@@ -178,6 +178,7 @@ def history():  ### Program History - only a method for PythonWin collapsing! ##
     # 4.24.0 - Changed warning and error repeat behaviour at EndLog.
     # 4.24.1 - Fixed signif calculation and sortKeys for python3.
     # 4.24.2 - Fixed md5 hash bug.
+    # 4.23.3 - Py3 urllib bug fix. / to // bug fixes.
     '''
 #########################################################################################################################
 def todo():     ### Major Functionality to Add - only a method for PythonWin collapsing! ###
@@ -2790,7 +2791,7 @@ def median(numlist,avtie=True):    ### Returns median for a list of numbers
     n = len(numlist)
     ncopy = numlist[0:]
     ncopy.sort()
-    if isOdd(n) or not avtie: return ncopy[len(ncopy)/2]
+    if isOdd(n) or not avtie: return ncopy[len(ncopy)//2]
     return sum(ncopy[(len(ncopy)-1)/2:][:2]) / 2.0
 #########################################################################################################################
 def mean(numlist):    ### Returns mean for a list of numbers
@@ -3949,7 +3950,7 @@ def posFromIndex(target,INDEX,start_pos=0,end_pos=-1,re_index='^(\S+)=',sortuniq
         else:   ## This line is after the accession number: move back
             jpos = ipos
         ## Redefine ipos and repeat ##
-        ipos = start_pos + ((jpos - start_pos) / 2)
+        ipos = start_pos + ((jpos - start_pos) // 2)
         if ipos in [start_pos,jpos]:   # target not found in Index
             ipos = -1
             break
@@ -3969,7 +3970,14 @@ def urlToFile(sourceurl,filename,callobj,appendable=True,backupfile=True,log=Tru
         if backupfile and callobj: backup(callobj,filename,appendable=appendable)
         ### ~ [1] Download ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
         if log and callobj: callobj.progLog('#URL','Downloading %s' % sourceurl)
-        open(filename,'a').write(urllib.urlopen(sourceurl).read())
+        try:
+            if py3:
+                open(filename,'a').write(urllib.urlopen(sourceurl).read().decode('utf-8'))
+            else:
+                open(filename,'a').write(urllib.urlopen(sourceurl).read())
+        except:
+            filstr = str(urllib.urlopen(sourceurl).read().decode('ascii'))
+            open(filename, 'a').write(filestr)
         if log and callobj: callobj.printLog('\r#URL','Downloaded %s -> %s' % (sourceurl,filename),log=log)
     except:
         if callobj: callobj.errorLog('urlToFile error!'); return False
