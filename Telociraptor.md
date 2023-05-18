@@ -1,7 +1,7 @@
 # Telociraptor: Telomere Prediction and Genome Assembly Editing Tool
 
 ```
-Telociraptor v0.6.0
+Telociraptor v0.8.0
 ```
 
 For a better rendering and navigation of this document, please download and open [`./docs/telociraptor.docs.html`](./docs/telociraptor.docs.html), or visit <https://slimsuite.github.io/telociraptor/>.
@@ -90,7 +90,8 @@ elements. In this case, the entire chunk including the intervening region will b
 4. Finally, each sequence is considered in term and assessed with respect to internal telomere positions. First,
 end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
 (b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
-where there is an outward-facing telomere within `trimlimit=INT` bp of the end. Where a possible inversion or
+where there is an outward-facing telomere within `trimlimit=INT` bp of the end. If `trimfrag=T` then these
+will be split into contigs, otherwise the whole scaffold chunk will be a new sequence. Where a possible inversion or
 trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
 
 ## Citation
@@ -152,6 +153,7 @@ descaffold=LIST : List of contigs to remove from scaffolds but keep in assembly 
 invert=LIST     : List of contigs/regions to invert (in order) []
 invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
 trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
+trimfrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
 ### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
 ```
 

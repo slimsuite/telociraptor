@@ -868,12 +868,12 @@ class SeqList(rje_obj.RJE_Object):
                 SEQFILE = self.SEQFILE()
                 SEQFILE.seek(seq)
                 name = rje.chomp(SEQFILE.readline())
+                quality = ''
                 if name[:1] == '@': # FASTQ
                     name = name[1:]
-                    sequence = ''; line = rje.chomp(SEQFILE.readline())
-                    while line and line[:1] != '+':
-                        sequence += line
-                        line = rje.chomp(SEQFILE.readline())
+                    sequence = rje.chomp(SEQFILE.readline())
+                    line = rje.chomp(SEQFILE.readline())
+                    quality = rje.chomp(SEQFILE.readline())
                 elif name[:1] == '>':
                     name = name[1:]
                     sequence = ''; line = rje.chomp(SEQFILE.readline())
@@ -889,6 +889,7 @@ class SeqList(rje_obj.RJE_Object):
                     if case: return {'Name':name,'Sequence':sequence}
                     else: return {'Name':name,'Sequence':sequence.upper()}
                 elif format == 'short': return rje.split(name)[0]
+                elif format == 'fastq': return (name,sequence,quality)
                 else:
                     if case: return (name,sequence)
                     else: return (name,sequence.upper())

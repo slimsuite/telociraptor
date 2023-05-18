@@ -19,8 +19,8 @@
 """
 Module:       Telociraptor
 Description:  Telomere Prediction and Genome Assembly Editing Tool
-Version:      0.6.0
-Last Edit:    09/05/23
+Version:      0.8.0
+Last Edit:    12/05/23
 Copyright (C) 2021  Richard J. Edwards - See source code for GNU License Notice
 
 Function:
@@ -93,7 +93,8 @@ Function:
     4. Finally, each sequence is considered in term and assessed with respect to internal telomere positions. First,
     end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
     (b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
-    where there is an outward-facing telomere within `trimlimit=INT` bp of the end. Where a possible inversion or
+    where there is an outward-facing telomere within `trimlimit=INT` bp of the end. If `trimfrag=T` then these
+        will be split into contigs, otherwise the whole scaffold chunk will be a new sequence. Where a possible inversion or
     trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
 
 Commandline:
@@ -123,6 +124,7 @@ Commandline:
     invert=LIST     : List of contigs/regions to invert (in order) []
     invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
     trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
+    trimfrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
     ### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
 """
 #########################################################################################################################
@@ -145,6 +147,8 @@ def history():  ### Program History - only a method for PythonWin collapsing! ##
     # 0.4.1 - Fixed a bug when sequences have descriptions.
     # 0.5.0 - Added limit for end-trimming and split fixlimit into invlimit and trimlimit.
     # 0.6.0 - Added badcontigs=LIST and descaffold=LIST for removing or descaffolding contigs. Fixed trim bug.
+    # 0.7.0 - Added additional map collapse step for dealing with highly fragmented genomes more efficiently.
+    # 0.8.0 - Added trimfrag=T/F : Whether to fragment trimmed scaffold chunks into contigs [False].
     '''
 #########################################################################################################################
 def todo():     ### Major Functionality to Add - only a method for PythonWin collapsing! ###
@@ -167,11 +171,12 @@ def todo():     ### Major Functionality to Add - only a method for PythonWin col
     # [Y] : Extend inversions to multiple sequences X..Y and execute in order given. Recognise /../ inversions.
     # [ ] : Add gap normalisation to correct gap lengths.
     # [ ] : Add summary of fixes at the end of the run, along with change in telomere counts.
+    # [ ] : Fix problem with excess backups etc. when correcting from mapin to seqout.
     '''
 #########################################################################################################################
 def makeInfo(): ### Makes Info object which stores program details, mainly for initial print to screen.
     '''Makes Info object which stores program details, mainly for initial print to screen.'''
-    (program, version, last_edit, copy_right) = ('Telociraptor', '0.6.0', 'May 2023', '2023')
+    (program, version, last_edit, copy_right) = ('Telociraptor', '0.8.0', 'May 2023', '2023')
     description = 'Telomere Prediction and Genome Assembly Editing Tool'
     author = 'Dr Richard J. Edwards.'
     comments = ['This program is still in development and has not been published.',rje_obj.zen()]
@@ -248,6 +253,7 @@ class GenomeTweak(rje_readcore.ReadCore):
     - ChromSyn=T/F    : Whether to execute ChromSyn preparation (gaps.tdt and telonull telomere prediction) [True]
     - Telomeres=T/F   : Whether to include processing of telomeres [True]
     - TeloNull=T/F    : Whether to output sequences without telomeres to telomere table [False]
+    - TrimFrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
     - Tweak=T/F       : Whether to execute GenomeTweak pipeline [True]
 
     Int:integer
@@ -277,7 +283,7 @@ class GenomeTweak(rje_readcore.ReadCore):
         '''Sets Attributes of Object.'''
         ### ~ Basics ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
         self.strlist = ['FixOut','GapFile','MapIn','MapOut','SeqIn','SeqOut','TeloFile','TeloFwd','TeloRev']
-        self.boollist = ['AutoFix','ChromSyn','DocHTML','Telomeres','TeloNull','Tweak']
+        self.boollist = ['AutoFix','ChromSyn','DocHTML','Telomeres','TeloNull','TrimFrag','Tweak']
         self.intlist = ['InvLimit','TeloSize','TrimLimit']
         self.numlist = ['TeloPerc']
         self.filelist = []
@@ -287,7 +293,7 @@ class GenomeTweak(rje_readcore.ReadCore):
         ### ~ Defaults ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
         self._setDefaults(str='None',bool=False,int=0,num=0.0,obj=None,setlist=True,setdict=True,setfile=True)
         self.setStr({'TeloFwd':'C{2,4}T{1,2}A{1,3}','TeloRev':'T{1,3}A{1,2}G{2,4}'})
-        self.setBool({'AutoFix':True,'ChromSyn':True,'Telomeres':True,'TeloNull':False,'Tweak':True})
+        self.setBool({'AutoFix':True,'ChromSyn':True,'Telomeres':True,'TeloNull':False,'TrimFrag':False,'Tweak':True})
         self.setInt({'InvLimit':25,'TeloSize':50,'TrimLimit':5})
         self.setNum({'TeloPerc':50})
         ### ~ Other Attributes ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
@@ -308,7 +314,7 @@ class GenomeTweak(rje_readcore.ReadCore):
                 #self._cmdReadList(cmd,'path',['Att'])  # String representing directory path 
                 #self._cmdReadList(cmd,'file',['Att'])  # String representing file path 
                 #self._cmdReadList(cmd,'date',['Att'])  # String representing date YYYY-MM-DD
-                self._cmdReadList(cmd,'bool',['AutoFix','ChromSyn','DocHTML','Telomeres','TeloNull','Tweak'])  # True/False Booleans
+                self._cmdReadList(cmd,'bool',['AutoFix','ChromSyn','DocHTML','Telomeres','TeloNull','TrimFrag','Tweak'])  # True/False Booleans
                 self._cmdReadList(cmd,'int',['InvLimit','TeloSize','TrimLimit'])   # Integers
                 #self._cmdReadList(cmd,'float',['Att']) # Floats
                 self._cmdReadList(cmd,'perc',['TeloPerc'])  # Percentage, converts to 1-100 scale.
@@ -411,7 +417,8 @@ class GenomeTweak(rje_readcore.ReadCore):
         4. Finally, each sequence is considered in term and assessed with respect to internal telomere positions. First,
         end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
         (b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
-        where there is an outward-facing telomere within `trimlimit=INT` bp of the end. Where a possible inversion or
+        where there is an outward-facing telomere within `trimlimit=INT` bp of the end. If `trimfrag=T` then these
+        will be split into contigs, otherwise the whole scaffold chunk will be a new sequence. Where a possible inversion or
         trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
 
         ## Citation
@@ -473,6 +480,7 @@ class GenomeTweak(rje_readcore.ReadCore):
         invert=LIST     : List of contigs/regions to invert (in order) []
         invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
         trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
+        trimfrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
         ### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
         ```
 
@@ -521,7 +529,7 @@ class GenomeTweak(rje_readcore.ReadCore):
             if self.getBool('ChromSyn') or self.getBool('Telomeres'):
                 self.headLog('TELOCIRAPTOR TELOMERE PREDICTION', line='=')
                 if self.db('telomeres'): self.db('telomeres').rename('ctgtelomeres')
-                return self.findTelomeres(telbase=seqbase,keepnull=self.getBool('TeloNull'))
+                return self.findTelomeres(telbase=seqbase,keepnull=self.getBool('TeloNull') or self.getBool('ChromSyn'))
             elif not self.getBool('Tweak'):
                 self.printLog('#RUN','Telociraptor run with telomeres=F tweak=F chromsyn=F. No output.')
                 return False
@@ -539,9 +547,12 @@ class GenomeTweak(rje_readcore.ReadCore):
                 else: self.baseFile('telociraptor')
             self.printLog('#BASE','Output file basename: %s' % self.baseFile())
             ## ~ [1a] Check/summaries run modes and input files ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            if self.getStrLC('MapIn'):
+                self.printLog('#MODE','Map input mapin=FILE provided. Assembly generation only.')
+                self.setBool({'Tweak': True,'Telomeres': False, 'ChromSyn':False})
             self.printLog('#MODE','GenomeTweak assembly map/tweaking (tweak=T/F): {0}'.format(self.getBool('Tweak')))
             self.printLog('#MODE','Telomere prediction  (telomeres=T/F): {0}'.format(self.getBool('Telomeres')))
-            self.printLog('#MODE','ChromSyn gap and telomere table generation (chromsyn=T/F): {0}'.format(self.getBool('Telomeres')))
+            self.printLog('#MODE','ChromSyn gap and telomere table generation (chromsyn=T/F): {0}'.format(self.getBool('ChromSyn')))
             for infile in ['SeqIn','MapIn','GapFile','TeloFile']:
                 if self.getStrLC(infile) and not rje.exists(self.getStr(infile)):
                     self.warnLog('{0}={1} set: file not found!'.format(infile,self.getStr(infile)))
@@ -551,6 +562,9 @@ class GenomeTweak(rje_readcore.ReadCore):
                     self.setStr({'SeqOut': '{0}.tweak.fasta'.format(self.baseFile())})
                 if not self.getStrLC('MapOut') and not self.getStrLC('MapIn'):
                     self.setStr({'MapOut':'{0}.ctgmap.txt'.format(self.baseFile())})
+                if self.getStrLC('AutoFix') and self.getStrLC('MapIn'):
+                    self.setBool({'AutoFix':False})
+                    self.printLog('#MODE', 'Set autofix=FALSE as mapin=File given.')
                 if not self.getStrLC('FixOut') and self.getBool('AutoFix'):
                     self.setStr({'FixOut':'{0}.tweak.txt'.format(self.baseFile())})
                     if not self.getStrLC('SeqOut'):
@@ -654,9 +668,66 @@ class GenomeTweak(rje_readcore.ReadCore):
             self.errorLog(self.zen())
         return False
 #########################################################################################################################
+    def collapseMap(self,seqmap):   ### Collapses an assembly map to scaffold chunks with hidden internal gaps.
+        '''
+        Collapse assembly map down to scaffold chunks with hidden internal gaps, checking for consistent strand.
+        Return {'NewMap':str,'GapLen':int,'CtgNum':int}
+        '''
+        try:### ~ [1] ~ Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            if len(seqmap.split('|')) == 1: return {'NewMap':seqmap,'GapLen':0,'CtgNum':1}
+            newmap = []
+            gaplen = 0
+            ctgnum = 0
+            #i# Initially build a list of mapElementData lists
+            gap = None    # Most recent gap to be added when needed or absorbed into scaffold chunk 
+            for mapel in seqmap.split('|'):
+                eldata = self.mapElementData(mapel)
+                if eldata[0] == 'Gap':
+                    if gap: gap[2] += eldata[2] # Concatenate gaps
+                    else: gap = eldata
+                    gaplen += eldata[2]
+                    continue
+                ctgnum += 1
+                absorb = True   # Whether to absorb map element
+                if not newmap:  # First element
+                    absorb = False
+                elif newmap[-1][0] != eldata[0]: # Different sequence
+                    absorb = False
+                elif newmap[-1][3] != eldata[3]: # Different strand
+                    absorb = False
+                elif newmap[-1][5]:     # Prev element has 3' Telomere
+                    absorb = False
+                elif eldata[4]:     # Next element has 5' Telomere
+                    absorb = False
+                else:   # Check gap distance
+                    gapn = 0
+                    if gap: gapn = gap[2]
+                    if eldata[3] and newmap[-1][1] != (eldata[2] + gapn + 1):   # -ve strand gap mismatch
+                        absorb = False
+                    elif not eldata[3] and (newmap[-1][2] + gapn + 1) != eldata[1]:   # +ve strand gap mismatch
+                        absorb = False
+                if absorb:  # Update previous element end or start
+                    if newmap[-1][3]:
+                        newmap[-1][1] = eldata[1]
+                    else:
+                        newmap[-1][2] = eldata[2]
+                else:
+                    if gap: newmap.append(gap)
+                    newmap.append(eldata)
+                gap = None
+            #i# Convert lists back into elements and then maps
+            mapstr = []
+            for eldata in newmap:
+                mapstr.append(self.mapElementFromData(eldata))
+            return {'NewMap':'|'.join(mapstr),'GapLen':gaplen,'CtgNum':ctgnum}
+        except:
+            self.errorLog(self.zen())
+        return False
+#########################################################################################################################
     def mapElementData(self,mapel): ### Returns a list of [SeqName, seqi, seqj, Rev, Tel5, Tel3]
         '''
         Returns a list of [SeqName, seqi, seqj, Rev, Tel5, Tel3].
+        Gaps return ['Gap',1,$GAPLEN,None,False,False]
         '''
         seqin = self.seqinObj()
         seqdict = seqin.seqNameDic()
@@ -687,7 +758,22 @@ class GenomeTweak(rje_readcore.ReadCore):
         elif mapel.isdigit():
             eldata[0] = 'Gap'
             eldata[2] = int(mapel)
+        #self.bugPrint('{0} -> {1}'.format(mapel,eldata))
         return eldata
+#########################################################################################################################
+    def mapElementFromData(self,eldata): ### Returns a map element from list of [SeqName, seqi, seqj, Rev, Tel5, Tel3]
+        '''
+        Returns a map element from a list of [SeqName, seqi, seqj, Rev, Tel5, Tel3].
+        Gaps look like ['Gap',1,$GAPLEN,None,False,False]
+        '''
+        if eldata[0] == 'Gap': return '~{0}~'.format(eldata[2])
+        mapel = ''
+        if eldata[4]: mapel = mapel + '{'
+        mapel = mapel + '{0}:{1}-{2}'.format(eldata[0],eldata[1],eldata[2])
+        if eldata[3]: mapel = mapel + ':-'
+        else: mapel = mapel + ':+'
+        if eldata[5]: mapel = mapel + '}'
+        return mapel
 #########################################################################################################################
     def mapLength(self,seqmap): ### Returns the total length of a seqmap
         '''
@@ -910,42 +996,62 @@ class GenomeTweak(rje_readcore.ReadCore):
                 tel5 = seqmap.find('{')    # Whether 5' telomere reached
                 tel3 = seqmap.find('}')    # Whether 3' telomere reached
                 if tel5 > 0 and (tel3 > tel5 or tel3 < 0):
-                    trimchunk = seqmap[:tel5+1]
+                    trimchunk = seqmap[:tel5-1]
                     trimlen = self.mapLength(trimchunk)
                     lentxt = '({0} of {1})'.format(rje_seqlist.dnaLen(trimlen),rje_seqlist.dnaLen(seqlen))
                     if fixlimit <= 100 and (100 * float(trimlen) / seqlen) > fixlimit: trimchunk = ''
                     if fixlimit > 100 and trimlen > fixlimit: trimchunk = ''
                     if trimchunk:
                         self.printLog('#TRIM','Trimmed 5\' of {0} {1}'.format(newname.split()[0],lentxt))
-                        self.printLog('#DETAIL','Trim 5\' of {0}: {1}'.format(newname.split()[0],trimchunk))
+                        self.printLog('#DETAIL','Trim 5\' of {0}: {1}'.format(newname.split()[0],seqmap[:tel5+1]))
                         seqmap = seqmap[tel5:]
-                        for mapel in trimchunk[:tel5].split('|'):
-                            if not mapel: continue
-                            mdata = self.mapElementData(mapel)
-                            if mdata[0] in seqdict:
-                                fixlist.append('||{0}.{1}-{2}>>{3}<<'.format(mdata[0],mdata[1],mdata[2],mapel))
-                                modified = True
+                        modified = True
+                        if self.getBool('TrimFrag'):
+                            for mapel in trimchunk.split('|'):
+                                if not mapel: continue
+                                mdata = self.mapElementData(mapel)
+                                if mdata[0] in seqdict:
+                                    fixlist.append('||{0}.{1}-{2}>>{3}<<'.format(mdata[0],mdata[1],mdata[2],mapel))
+                        else:
+                            fragi = 1
+                            trimlist = trimchunk.split('|')
+                            while trimlist and trimlist[-1][0] == '~': trimlist = trimlist[:-1]
+                            trimchunk = '|'.join(trimlist)
+                            if trimchunk:
+                                fragj = self.mapLength(trimchunk)
+                                fixlist.append('||{0}.{1}-{2}>>{3}<<'.format(newname.split()[0],fragi,fragj,trimchunk))
                     else:
                         self.printLog('#NOTE','Note: might want to trim 5\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[:tel5+1],lentxt))
                 tel5 = seqmap.rfind('{')    # Whether 5' telomere reached
                 tel3 = seqmap.rfind('}')    # Whether 3' telomere reached
                 endlist = []
                 if tel3 < (len(seqmap) - 1) and tel3 > tel5:
-                    trimchunk = seqmap[tel3:]
+                    trimchunk = seqmap[tel3+2:]
                     trimlen = self.mapLength(trimchunk)
                     lentxt = '({0} of {1})'.format(rje_seqlist.dnaLen(trimlen),rje_seqlist.dnaLen(seqlen))
                     if fixlimit <= 100 and (100 * float(trimlen) / seqlen) > fixlimit: trimchunk = ''
                     if fixlimit > 100 and trimlen > fixlimit: trimchunk = ''
                     if trimchunk:
                         self.printLog('#TRIM','Trimmed 3\' of {0} {1}'.format(newname.split()[0],lentxt))
-                        self.printLog('#DETAIL','Trim 3\' of {0}: {1}'.format(newname.split()[0],trimchunk))
+                        self.printLog('#DETAIL','Trim 3\' of {0}: {1}'.format(newname.split()[0],seqmap[tel3:]))
                         seqmap = seqmap[:tel3+1]
-                        for mapel in trimchunk[1:].split('|'):
-                            if not mapel: continue
-                            mdata = self.mapElementData(mapel)
-                            if mdata[0] in seqdict:
-                                endlist.append('||{0}.{1}-{2}>>{3}<<'.format(mdata[0], mdata[1], mdata[2], mapel))
-                                modified = True
+                        modified = True
+                        if self.getBool('TrimFrag'):
+                            for mapel in trimchunk.split('|'):
+                                if not mapel: continue
+                                mdata = self.mapElementData(mapel)
+                                if mdata[0] in seqdict:
+                                    endlist.append('||{0}.{1}-{2}>>{3}<<'.format(mdata[0], mdata[1], mdata[2], mapel))
+                        else:
+                            fragi = self.mapLength(seqmap) + 1
+                            fragj = seqlen
+                            trimlist = trimchunk.split('|')
+                            while trimlist and trimlist[0][0] == '~': 
+                                fragi += self.mapLength(trimlist[0])
+                                trimlist = trimlist[1:]
+                            trimchunk = '|'.join(trimlist)
+                            if trimchunk:
+                                endlist.append('||{0}.{1}-{2}>>{3}<<'.format(newname.split()[0],fragi,fragj,trimchunk))
                     else:
                         self.printLog('#NOTE','Note: might want to trim 3\' {2} of {0}: {1}'.format(newname.split()[0],seqmap[tel3:],lentxt))
 
@@ -992,14 +1098,29 @@ class GenomeTweak(rje_readcore.ReadCore):
             maplist = maplist.split('<<')
             if not maplist[-1].startswith('||'):  maplist = maplist[:-1]
             self.printLog('#CTGMAP','{0} sequences read from {1}'.format(rje.iLen(maplist),self.getStr('MapIn')))
+            colmap = os.path.splitext(self.getStr('MapIn'))[0] + '.collapsed.txt'
+            rje.backup(self,colmap)
+            #!# Add a collapseMap() method to collapse down to scaffold chunks with internal gaps and then output using that
+            #!# Need to make sure that it checks for consistent strand
+            #!# Return {'NewMap':,'GapLen','CtgNum'}
 
             ### ~ [2] ~ Generate and output sequences ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
             rje.backup(self,self.getStr('SeqOut'))
             SEQOUT = open(self.getStr('SeqOut'),'w')
+            COLOUT = open(colmap,'w')
             for newseq in maplist:
-                [newname,seqmap] = newseq.split('>>')
+                try: [newname,seqmap] = newseq.split('>>')
+                except: raise ValueError('Problem with seqmap entry: {0}'.format(newseq))
                 if newname[:2] == '||': newname = newname[2:]
                 SEQOUT.write('>{0}\n'.format(newname))
+                #i# Simplify with collapse map
+                newmap = self.collapseMap(seqmap)
+                self.deBug('{0} -> {1}'.format(seqmap,newmap['NewMap']))
+                seqmap = newmap['NewMap']
+                gaplen = newmap['GapLen']
+                ctgnum = newmap['CtgNum']
+                COLOUT.write('||{0}>>{1}<<\n'.format(newname,seqmap))
+                # Convert to sequence
                 newseq = ''
                 cx = 1; fx = 0
                 for mapel in seqmap.split('|'):
@@ -1034,9 +1155,11 @@ class GenomeTweak(rje_readcore.ReadCore):
                         newseq = newseq + 'N' * int(mapel)
                         cx += 1
                 SEQOUT.write('{0}\n'.format(newseq))
-                self.printLog('#SCAFF','{0} = {1} ({2} fragments; {3} contigs)'.format(newname,rje_seqlist.dnaLen(len(newseq)),fx,cx))
+                self.printLog('#SCAFF','{0} = {1} ({2} chunks; {3} contigs; {4} gap bases)'.format(newname,rje_seqlist.dnaLen(len(newseq)),fx,ctgnum,rje_seqlist.dnaLen(gaplen)))
             SEQOUT.close()
+            COLOUT.close()
             self.printLog('#SEQOUT','{0} sequences saved to {1}'.format(rje.iLen(maplist),self.getStr('SeqOut')))
+            self.printLog('#MAPOUT','Collapsed assembly map saved to {0}'.format(colmap))
             return True
         except:
             self.errorLog(self.zen())

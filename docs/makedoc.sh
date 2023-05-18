@@ -1,12 +1,12 @@
 export RSTUDIO_PANDOC=/Applications/RStudio.app/Contents/MacOS/pandoc
 
-python ../code/telociraptor.py dochtml newlog
+python3 ../code/telociraptor.py dochtml newlog
 
-python ../code/telociraptor.py --description | sed 's/^/# /' > ../Telociraptor.md
+python3 ../code/telociraptor.py --description | sed 's/^/# /' > ../Telociraptor.md
 echo >> ../Telociraptor.md
 
 echo '```' >> ../Telociraptor.md
-python ../code/telociraptor.py --details >> ../Telociraptor.md
+python3 ../code/telociraptor.py --details >> ../Telociraptor.md
 echo '```' >> ../Telociraptor.md
 echo >> ../Telociraptor.md
 echo 'For a better rendering and navigation of this document, please download and open [`./docs/telociraptor.docs.html`](./docs/telociraptor.docs.html), or visit <https://slimsuite.github.io/telociraptor/>.' >> ../Telociraptor.md

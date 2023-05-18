@@ -2792,7 +2792,7 @@ def median(numlist,avtie=True):    ### Returns median for a list of numbers
     ncopy = numlist[0:]
     ncopy.sort()
     if isOdd(n) or not avtie: return ncopy[len(ncopy)//2]
-    return sum(ncopy[(len(ncopy)-1)/2:][:2]) / 2.0
+    return sum(ncopy[(len(ncopy)-1)//2:][:2]) / 2.0
 #########################################################################################################################
 def mean(numlist):    ### Returns mean for a list of numbers
     '''Returns mean for a list of numbers.'''
