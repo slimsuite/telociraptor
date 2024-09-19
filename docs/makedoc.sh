@@ -1,4 +1,4 @@
-export RSTUDIO_PANDOC=/Applications/RStudio.app/Contents/MacOS/pandoc
+#export RSTUDIO_PANDOC=/Applications/RStudio.app/Contents/MacOS/pandoc
 
 python3 ../code/telociraptor.py dochtml newlog
 

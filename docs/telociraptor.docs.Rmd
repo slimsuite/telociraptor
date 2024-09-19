@@ -1,7 +1,7 @@
 ---
-title: "Telociraptor V0.8.0 Documentation"
+title: "Telociraptor V0.11.0 Documentation"
 author: "Richard J. Edwards"
-date: "2023-05-18"
+date: "2024-09-19"
 output:
   html_document:
     css: http://www.slimsuite.unsw.edu.au/stylesheets/slimhtml.css
@@ -93,7 +93,8 @@ through up to four editing cycles, depending on input settings:
 the assembly (e.g. contigs that have been identified by DepthKopy as lacking sequence coverage), whilst the latter
 will be excised from scaffolds but left in the assembly as a contig. (These can be comma separated lists, or text
 files containing one contig per line.) If removed, the downstream gap will also be removed, unless it is the 3'
-end contig, in which case the upstream gap will be removed.
+end contig, in which case the upstream gap will be removed. If `gapsize=INT` has been set, all gaps will be 
+standardised to this size.
 
 2. Any regions in the MapIn file flanked by `/` characters (`/../`) will be inverted.
 
@@ -168,6 +169,17 @@ invert=LIST     : List of contigs/regions to invert (in order) []
 invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
 trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
 trimfrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
+gapsize=INT     : Set all gaps to size INT bp (0=removes gaps; <0 leave unchanged) [-1]
+minlen=INT      : Minimum sequence length (bp) [0]
+### ~ Chromosome rennaming options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+chromsort=T/F   : Whether to size sort sequences and then rename as CHR, CTG or SCF [False]
+minchrom=INT    : Minimum sequence length to be named as chromosome [1e7]
+newprefix=X     : Assembly chromosome prefix. If None, will just use chr, ctg and scf [None]
+### ~ Telomeric read extraction ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+teloreads=FILE  : Extract telomeric reads from FILE into $BASEFILE.teloreads.fa [None]
+minreadlen=INT  : Minimum length for filtered telomeric reads [1000]
+teloseed=INT    : Seed number of telomere repeats to pull out telomeric reads for the findTelomere() method [3]
+termseed=T/F    : Whether the seed zgrep for multiple telomeric repeats needs to be terminally constrained [False]
 ### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
 ```
 

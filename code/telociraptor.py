@@ -19,8 +19,8 @@
 """
 Module:       Telociraptor
 Description:  Telomere Prediction and Genome Assembly Editing Tool
-Version:      0.8.0
-Last Edit:    12/05/23
+Version:      0.11.0
+Last Edit:    05/09/24
 Copyright (C) 2021  Richard J. Edwards - See source code for GNU License Notice
 
 Function:
@@ -94,7 +94,7 @@ Function:
     end inversions are identified as inward-facing telomeres that are (a) within `invlimit=INT` bp of the end, and
     (b) more terminal than an outward-facing telomere. Following this, the ends of the scaffolds will be trimmed
     where there is an outward-facing telomere within `trimlimit=INT` bp of the end. If `trimfrag=T` then these
-        will be split into contigs, otherwise the whole scaffold chunk will be a new sequence. Where a possible inversion or
+    will be split into contigs, otherwise the whole scaffold chunk will be a new sequence. Where a possible inversion or
     trim is identified but beyond the distance limits, it will appear in the log as a `#NOTE`.
 
 Commandline:
@@ -114,6 +114,7 @@ Commandline:
     teloperc=PERC   : Percentage of telomeric region matching telomeric repeat to call as telomere [50]
     ### ~ Genome Tweak run options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
     seqout=FILE     : Output sequence filename [$BASEFILE.tweak.fasta]
+    collapse=T/F    : Whether to collapse assembly prior to output. (Faster but will not mask internal sequences) [True]
     mapin=FILE      : Text file input for genome assembly map [None]
     mapout=FILE     : Text file output for genome assembly map [$BASEFILE.ctgmap.txt]
     gapfile=TDT     : Delimited file of `seqname start end seqlen gaplen` [$SEQINBASE.gaps.tdt]
@@ -125,6 +126,18 @@ Commandline:
     invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
     trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
     trimfrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
+    gapsize=INT     : Set all gaps to size INT bp (0=removes gaps; <0 leave unchanged) [-1]
+    minlen=INT      : Minimum sequence length (bp) [0]
+    ### ~ Chromosome rennaming options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+    chromsort=T/F   : Whether to size sort sequences and then rename as CHR, CTG or SCF [False]
+    minchrom=INT    : Minimum sequence length to be named as chromosome [1e7]
+    newprefix=X     : Assembly chromosome prefix. If None, will just use chr, ctg and scf [None]
+    ### ~ Telomeric read extraction ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+    teloreads=FILE  : Extract telomeric reads from FILE into $BASEFILE.teloreads.fa [None]
+    minreadlen=INT  : Minimum length for filtered telomeric reads [1000]
+    teloseed=INT    : Seed number of telomere repeats to pull out telomeric reads for the findTelomere() method [3]
+    termseed=T/F    : Whether the seed zgrep for multiple telomeric repeats needs to be terminally constrained [False]
+    telobuffer=INT  : Maximum number of non-telomere repeat sequence at ends of sequences (bp) [6]
     ### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
 """
 #########################################################################################################################
@@ -149,6 +162,10 @@ def history():  ### Program History - only a method for PythonWin collapsing! ##
     # 0.6.0 - Added badcontigs=LIST and descaffold=LIST for removing or descaffolding contigs. Fixed trim bug.
     # 0.7.0 - Added additional map collapse step for dealing with highly fragmented genomes more efficiently.
     # 0.8.0 - Added trimfrag=T/F : Whether to fragment trimmed scaffold chunks into contigs [False].
+    # 0.8.1 - Fixed some autofix option compatibility bugs.
+    # 0.9.0 - Added chromosome sorting and renaming and telomeric read extraction.
+    # 0.10.0 - Added recognition of SynBad v0.12.0 assembly map output for easier curation. Added gapsize function.
+    # 0.11.0 - Added collapse=T/F : Whether to collapse assembly prior to output. (Faster but will not mask internal sequences) [True]
     '''
 #########################################################################################################################
 def todo():     ### Major Functionality to Add - only a method for PythonWin collapsing! ###
@@ -172,11 +189,18 @@ def todo():     ### Major Functionality to Add - only a method for PythonWin col
     # [ ] : Add gap normalisation to correct gap lengths.
     # [ ] : Add summary of fixes at the end of the run, along with change in telomere counts.
     # [ ] : Fix problem with excess backups etc. when correcting from mapin to seqout.
+    # [ ] : Rationalise and document settings for different inputs/outputs. (e.g. MapIn & AutoFix)
+    # [ ] : Add the Telomere identification and assembly from raw reads.
+    # [Y] : Add code to sort sequences by length and name chromosomes. minchrom=INT -> Generate *.chrmap.txt & regenerate.
+    # [ ] : Add extraction of telomeric reads from a BAM file using sequence and/or contig telomere predictions.
+    # [ ] : Add BED file output for the telomeres that can be used with the BAM file.
+    # [ ] : Add use of TIDK explore output.
+    # [ ] : Add option to switch end of scaffold contigs rather than trim them, i.e. keep them in the chromosome.
     '''
 #########################################################################################################################
 def makeInfo(): ### Makes Info object which stores program details, mainly for initial print to screen.
     '''Makes Info object which stores program details, mainly for initial print to screen.'''
-    (program, version, last_edit, copy_right) = ('Telociraptor', '0.8.0', 'May 2023', '2023')
+    (program, version, last_edit, copy_right) = ('Telociraptor', '0.11.0', 'September 2024', '2023')
     description = 'Telomere Prediction and Genome Assembly Editing Tool'
     author = 'Dr Richard J. Edwards.'
     comments = ['This program is still in development and has not been published.',rje_obj.zen()]
@@ -242,22 +266,33 @@ class GenomeTweak(rje_readcore.ReadCore):
     - GapFile=TDT     : Delimited file of `seqname start end seqlen gaplen` [$SEQINBASE.gaps.tdt]
     - MapIn=FILE      : Text file input for genome assembly map [None]
     - MapOut=FILE     : Text file output for genome assembly map [None]
+    - NewPrefix=X     : Assembly chromosome prefix. If None, will just use chr, ctg and scf [None]
     - SeqIn=FILE      : Input sequence assembly [None]
     - SeqOut=FILE     : Output sequence filename [$BASEFILE.tweak.fasta]
     - TeloFile=TDT    : Delimited file of `seqname seqlen tel5 tel3` [$SEQINBASE.telomeres.tdt]
     - TeloFwd=X       : Regex for 5' telomere sequence search [C{2,4}T{1,2}A{1,3}]
+    - TeloReads=FILE  : Extract telomeric reads from FILE into $BASEFILE.teloreads.fa [None]
     - TeloRev=X       : Regex for 5' telomere sequence search [T{1,3}A{1,2}G{2,4}]
 
     Bool:boolean
     - AutoFix=T/F     : Whether to try to fix terminal inversions based on telomere predictions [True]
+    - ChromSort=T/F   : Whether to size sort sequences and then rename as CHR, CTG or SCF [False]
     - ChromSyn=T/F    : Whether to execute ChromSyn preparation (gaps.tdt and telonull telomere prediction) [True]
+    - Collapse=T/F    : Whether to collapse assembly prior to output. (Faster but will not mask internal sequences) [True]
     - Telomeres=T/F   : Whether to include processing of telomeres [True]
     - TeloNull=T/F    : Whether to output sequences without telomeres to telomere table [False]
+    - TermSeed=T/F    : Whether the seed zgrep for multiple telomeric repeats needs to be terminally constrained [False]
     - TrimFrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
     - Tweak=T/F       : Whether to execute GenomeTweak pipeline [True]
 
     Int:integer
+    - GapSize=INT     : Set all gaps to size INT bp (0=removes gaps; <0 leave unchanged) [-1]
     - Invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
+    - MinChrom=INT    : Minimum sequence length to be named as chromosome [1e7]
+    - MinLen=INT      : Minimum sequence length (bp) [0]
+    - MinReadLen=INT  : Minimum length for filtered telomeric reads [1000]
+    - TeloBuffer=INT  : Maximum number of non-telomere repeat sequence at ends of sequences (bp) [6]
+    - TeloSeed=INT    : Seed number of telomere repeats to pull out telomeric reads for the findTelomere() method [3]
     - TeloSize=INT    : Size of terminal regions (bp) to scan for telomeric repeats [50]
     - TrimLimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
 
@@ -282,9 +317,9 @@ class GenomeTweak(rje_readcore.ReadCore):
     def _setAttributes(self):   ### Sets Attributes of Object
         '''Sets Attributes of Object.'''
         ### ~ Basics ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
-        self.strlist = ['FixOut','GapFile','MapIn','MapOut','SeqIn','SeqOut','TeloFile','TeloFwd','TeloRev']
-        self.boollist = ['AutoFix','ChromSyn','DocHTML','Telomeres','TeloNull','TrimFrag','Tweak']
-        self.intlist = ['InvLimit','TeloSize','TrimLimit']
+        self.strlist = ['FixOut','GapFile','MapIn','MapOut','NewPrefix','SeqIn','SeqOut','TeloFile','TeloFwd','TeloReads','TeloRev']
+        self.boollist = ['AutoFix','ChromSort','ChromSyn','Collapse','DocHTML','Telomeres','TeloNull','TermSeed','TrimFrag','Tweak']
+        self.intlist = ['GapSize','InvLimit','MinChrom','MinLen','MinReadLen','TeloSeed','TeloSize','TrimLimit']
         self.numlist = ['TeloPerc']
         self.filelist = []
         self.listlist = ['BadContig','Descaffold','Invert']
@@ -293,8 +328,8 @@ class GenomeTweak(rje_readcore.ReadCore):
         ### ~ Defaults ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
         self._setDefaults(str='None',bool=False,int=0,num=0.0,obj=None,setlist=True,setdict=True,setfile=True)
         self.setStr({'TeloFwd':'C{2,4}T{1,2}A{1,3}','TeloRev':'T{1,3}A{1,2}G{2,4}'})
-        self.setBool({'AutoFix':True,'ChromSyn':True,'Telomeres':True,'TeloNull':False,'TrimFrag':False,'Tweak':True})
-        self.setInt({'InvLimit':25,'TeloSize':50,'TrimLimit':5})
+        self.setBool({'AutoFix':True,'ChromSort':False,'ChromSyn':True,'Telomeres':True,'TeloNull':False,'TrimFrag':False,'Tweak':True})
+        self.setInt({'GapSize':-1,'InvLimit':25,'MinChrom':10000000,'MinReadLen':1000,'TeloBuffer':6,'TeloSeed':3,'TeloSize':50,'TrimLimit':5})
         self.setNum({'TeloPerc':50})
         ### ~ Other Attributes ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
         self._setForkAttributes()   # Delete if no forking
@@ -310,12 +345,12 @@ class GenomeTweak(rje_readcore.ReadCore):
                 self._forkCmd(cmd)  # Delete if no forking
                 ### Class Options (No need for arg if arg = att.lower()) ### 
                 #self._cmdRead(cmd,type='str',att='Att',arg='Cmd')  # No need for arg if arg = att.lower()
-                self._cmdReadList(cmd,'str',['FixOut','GapFile','MapIn','MapOut','SeqIn','SeqOut','TeloFile','TeloFwd','TeloRev'])   # Normal strings
+                self._cmdReadList(cmd,'str',['FixOut','GapFile','MapIn','MapOut','NewPrefix','SeqIn','SeqOut','TeloFile','TeloFwd','TeloRev'])   # Normal strings
                 #self._cmdReadList(cmd,'path',['Att'])  # String representing directory path 
-                #self._cmdReadList(cmd,'file',['Att'])  # String representing file path 
+                self._cmdReadList(cmd,'file',['TeloReads'])  # String representing file path 
                 #self._cmdReadList(cmd,'date',['Att'])  # String representing date YYYY-MM-DD
-                self._cmdReadList(cmd,'bool',['AutoFix','ChromSyn','DocHTML','Telomeres','TeloNull','TrimFrag','Tweak'])  # True/False Booleans
-                self._cmdReadList(cmd,'int',['InvLimit','TeloSize','TrimLimit'])   # Integers
+                self._cmdReadList(cmd,'bool',['AutoFix','ChromSort','ChromSyn','Collapse','DocHTML','Telomeres','TeloNull','TermSeed','TrimFrag','Tweak'])  # True/False Booleans
+                self._cmdReadList(cmd,'int',['GapSize','InvLimit','MinChrom','MinLen','MinReadLen','TeloBuffer','TeloSeed','TeloSize','TrimLimit'])   # Integers
                 #self._cmdReadList(cmd,'float',['Att']) # Floats
                 self._cmdReadList(cmd,'perc',['TeloPerc'])  # Percentage, converts to 1-100 scale.
                 #self._cmdReadList(cmd,'min',['Att'])   # Integer value part of min,max command
@@ -406,7 +441,8 @@ class GenomeTweak(rje_readcore.ReadCore):
         the assembly (e.g. contigs that have been identified by DepthKopy as lacking sequence coverage), whilst the latter
         will be excised from scaffolds but left in the assembly as a contig. (These can be comma separated lists, or text
         files containing one contig per line.) If removed, the downstream gap will also be removed, unless it is the 3'
-        end contig, in which case the upstream gap will be removed.
+        end contig, in which case the upstream gap will be removed. If `gapsize=INT` has been set, all gaps will be 
+        standardised to this size.
 
         2. Any regions in the MapIn file flanked by `/` characters (`/../`) will be inverted.
 
@@ -481,6 +517,17 @@ class GenomeTweak(rje_readcore.ReadCore):
         invlimit=NUM    : Limit inversion distance to within X% (<=100) or Xbp (>100) of chromosome termini [25]
         trimlimit=NUM   : Limit trimming distance to within X% (<=100) or Xbp (>100) of chromosome termini [5]
         trimfrag=T/F    : Whether to fragment trimmed scaffold chunks into contigs [False]
+        gapsize=INT     : Set all gaps to size INT bp (0=removes gaps; <0 leave unchanged) [-1]
+        minlen=INT      : Minimum sequence length (bp) [0]
+        ### ~ Chromosome rennaming options ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+        chromsort=T/F   : Whether to size sort sequences and then rename as CHR, CTG or SCF [False]
+        minchrom=INT    : Minimum sequence length to be named as chromosome [1e7]
+        newprefix=X     : Assembly chromosome prefix. If None, will just use chr, ctg and scf [None]
+        ### ~ Telomeric read extraction ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+        teloreads=FILE  : Extract telomeric reads from FILE into $BASEFILE.teloreads.fa [None]
+        minreadlen=INT  : Minimum length for filtered telomeric reads [1000]
+        teloseed=INT    : Seed number of telomere repeats to pull out telomeric reads for the findTelomere() method [3]
+        termseed=T/F    : Whether the seed zgrep for multiple telomeric repeats needs to be terminally constrained [False]
         ### ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
         ```
 
@@ -493,6 +540,7 @@ class GenomeTweak(rje_readcore.ReadCore):
         '''
         try:### ~ [1] ~ Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
             if self.getBool('DocHTML'): return rje_rmd.docHTML(self)
+            if self.getStrLC('TeloReads'): return self.teloReads()
             if not self.setup():
                 self.printLog('#FAIL','{0} setup failed.'.format(self.prog()))
                 return False
@@ -503,7 +551,7 @@ class GenomeTweak(rje_readcore.ReadCore):
                 self.headLog('TELOCIRAPTOR GENOMETWEAK PROCESSING', line='=')
                 if self.getStrLC('MapOut'):
                     ctgmap = self.makeMap()
-                    if self.getBool('AutoFix'):
+                    if self.getBool('AutoFix') or self.getBool('ChromSort'):
                         self.setStr({'MapIn': self.getStr('MapOut')})
                     else:
                         if not ctgmap: return False
@@ -512,6 +560,9 @@ class GenomeTweak(rje_readcore.ReadCore):
                         if not self.autoFix():
                             return False
                         self.setStr({'MapIn':self.getStr('FixOut')})
+                    if self.getBool('ChromSort'):
+                        if not self.chromSort():
+                            return False
                     if not self.mapToSeq(): return False
             ## ~ [2b] ChromSyn/Telomere mode ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
             if self.getBool('Tweak') and self.getStrLC('SeqOut'):
@@ -551,9 +602,13 @@ class GenomeTweak(rje_readcore.ReadCore):
                 self.printLog('#MODE','Map input mapin=FILE provided. Assembly generation only.')
                 self.setBool({'Tweak': True,'Telomeres': False, 'ChromSyn':False})
             self.printLog('#MODE','GenomeTweak assembly map/tweaking (tweak=T/F): {0}'.format(self.getBool('Tweak')))
+            if self.getBool('Tweak'):
+                self.printLog('#MODE','GenomeTweak autofix assembly correction (autofix=T/F): {0}'.format(self.getBool('AutoFix')))
             self.printLog('#MODE','Telomere prediction  (telomeres=T/F): {0}'.format(self.getBool('Telomeres')))
             self.printLog('#MODE','ChromSyn gap and telomere table generation (chromsyn=T/F): {0}'.format(self.getBool('ChromSyn')))
             for infile in ['SeqIn','MapIn','GapFile','TeloFile']:
+                if self.getStrLC(infile) and rje.exists(self.getStr(infile)):
+                    self.printLog('#INPUT','{0}: {1} found.'.format(infile,self.getStr(infile)))
                 if self.getStrLC(infile) and not rje.exists(self.getStr(infile)):
                     self.warnLog('{0}={1} set: file not found!'.format(infile,self.getStr(infile)))
             ### ~ [2] Load Sequences and Generate Required Files ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
@@ -562,9 +617,6 @@ class GenomeTweak(rje_readcore.ReadCore):
                     self.setStr({'SeqOut': '{0}.tweak.fasta'.format(self.baseFile())})
                 if not self.getStrLC('MapOut') and not self.getStrLC('MapIn'):
                     self.setStr({'MapOut':'{0}.ctgmap.txt'.format(self.baseFile())})
-                if self.getStrLC('AutoFix') and self.getStrLC('MapIn'):
-                    self.setBool({'AutoFix':False})
-                    self.printLog('#MODE', 'Set autofix=FALSE as mapin=File given.')
                 if not self.getStrLC('FixOut') and self.getBool('AutoFix'):
                     self.setStr({'FixOut':'{0}.tweak.txt'.format(self.baseFile())})
                     if not self.getStrLC('SeqOut'):
@@ -581,6 +633,8 @@ class GenomeTweak(rje_readcore.ReadCore):
             for seq in seqin.seqs():
                 if rje.matchExp('^~(\d+)~$', seqin.shortName(seq)):
                     self.ValueError('"~$NUMBER~" ({0}) sequence names will cause issues. Please rename and try again.'.format(rje.matchExp('^~(\d+)~$', seqin.shortName(seq))[0]))
+                elif rje.matchExp('^~(\S+):(\d+)~$', seqin.shortName(seq)):
+                    self.ValueError('"~$STRING:$NUMBER~" ({0}) sequence names will cause issues. Please rename and try again.'.format(seqin.shortName(seq)))
             seqin.makeSeqNameDic('short')
             return True     # Setup successful
         except: self.errorLog('Problem during %s setup.' % self.prog()); return False  # Setup failed
@@ -732,11 +786,15 @@ class GenomeTweak(rje_readcore.ReadCore):
         seqin = self.seqinObj()
         seqdict = seqin.seqNameDic()
         eldata = ['', 1, 0, None, False, False]
+        self.bugPrint(mapel)
         if mapel[:1] == '{': mapel = mapel[1:]; eldata[4] = True
         if mapel[-1:] == '}': mapel = mapel[:-1]; eldata[5] = True
         if rje.matchExp('^~(\d+)~$',mapel):
             eldata[0] = 'Gap'
             eldata[2] = int(rje.matchExp('^~(\d+)~$', mapel)[0])
+        elif rje.matchExp('^~(\S+):(\d+)~$',mapel):
+            eldata[0] = 'Gap'
+            eldata[2] = int(rje.matchExp('^~(\S+):(\d+)~$', mapel)[1])
         elif ':' in mapel or mapel in seqdict.keys():
             mdata = mapel.split(':')
             if len(mdata) == 3:
@@ -790,6 +848,7 @@ class GenomeTweak(rje_readcore.ReadCore):
         Inverts a map element.
         '''
         if rje.matchExp('^~(\d+)~$', mapel): return mapel
+        if rje.matchExp('^~(\S+):(\d+)~$',mapel): return mapel
         maptel = [False,False]
         if mapel[:1] == '{': mapel = mapel[1:]; maptel[0] = True
         if mapel[-1:] == '}': mapel = mapel[:-1]; maptel[1] = True
@@ -824,7 +883,8 @@ class GenomeTweak(rje_readcore.ReadCore):
         the assembly (e.g. contigs that have been identified by DepthKopy as lacking sequence coverage), whilst the latter
         will be excised from scaffolds but left in the assembly as a contig. (These can be comma separated lists, or text
         files containing one contig per line.) If removed, the downstream gap will also be removed, unless it is the 3'
-        end contig, in which case the upstream gap will be removed.
+        end contig, in which case the upstream gap will be removed. If gapsize >= 0 then all gaps will be standardised
+        to this size during this step.
 
         2. Any regions in the MapIn file flanked by `/` characters (`/../`) will be inverted.
 
@@ -854,6 +914,9 @@ class GenomeTweak(rje_readcore.ReadCore):
             fixlist = []    # List of updated map elements to output
 
             ## ~ [2a] Bad contigs and descaffolding ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            gapsize = self.getInt('GapSize')
+            if gapsize >= 0:
+                self.printLog('#GAPS','Standardising gaps to {} bp.'.format(gapsize))
             newmaplist = []
             for m, newseq in enumerate(maplist):
                 [newname, seqmap] = newseq.split('>>')
@@ -877,6 +940,10 @@ class GenomeTweak(rje_readcore.ReadCore):
                         if not newseqmap or seqmap[i-1] != newseqmap[-1]:   # Previous contig trimmed
                             gx += 1
                             continue
+                    if gapsize >= 0 and rje.matchExp('^~(\d+)~$', mapel):
+                        mapel = '~{}~'.format(gapsize)
+                    elif gapsize >= 0 and rje.matchExp('^~(\S+):(\d+)~$',mapel):
+                        mapel = '~{0}:{1}~'.format(rje.matchExp('^~(\S+):(\d+)~$',mapel)[0],gapsize)
                     newseqmap.append(mapel)
                 if newseqmap and len(seqmap) > 1 and newseqmap[-1].startswith('~') and newseqmap[-1] != seqmap[-1]:
                     newseqmap = newseqmap[:-1]  # Trim trailing gap
@@ -1064,6 +1131,8 @@ class GenomeTweak(rje_readcore.ReadCore):
             open(mapout, 'w').write('\n'.join(fixlist + ['\n']))
             self.printLog('\r#MAPOUT', 'Tweaked sequence contig map output to: {0}.'.format(mapout))
             if not modified: self.printLog('#NOFIX','Tweaked output is identical to input.')
+            elif gapsize >= 0:
+                self.printLog('#GAPS','Gaps standardised to {} bp.'.format(gapsize))
 
             return True
         except:
@@ -1100,40 +1169,53 @@ class GenomeTweak(rje_readcore.ReadCore):
             self.printLog('#CTGMAP','{0} sequences read from {1}'.format(rje.iLen(maplist),self.getStr('MapIn')))
             colmap = os.path.splitext(self.getStr('MapIn'))[0] + '.collapsed.txt'
             rje.backup(self,colmap)
-            #!# Add a collapseMap() method to collapse down to scaffold chunks with internal gaps and then output using that
+
             #!# Need to make sure that it checks for consistent strand
             #!# Return {'NewMap':,'GapLen','CtgNum'}
 
             ### ~ [2] ~ Generate and output sequences ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            minx = 0
             rje.backup(self,self.getStr('SeqOut'))
             SEQOUT = open(self.getStr('SeqOut'),'w')
-            COLOUT = open(colmap,'w')
+            if self.getBool('Collapse'): COLOUT = open(colmap,'w')
             for newseq in maplist:
                 try: [newname,seqmap] = newseq.split('>>')
                 except: raise ValueError('Problem with seqmap entry: {0}'.format(newseq))
                 if newname[:2] == '||': newname = newname[2:]
-                SEQOUT.write('>{0}\n'.format(newname))
+                #SEQOUT.write('>{0}\n'.format(newname))
                 #i# Simplify with collapse map
-                newmap = self.collapseMap(seqmap)
+                if self.getBool('Collapse'):
+                    newmap = self.collapseMap(seqmap)
+                else:
+                    newmap = {'NewMap':seqmap, 'GapLen':0, 'CtgNum':0}
                 self.deBug('{0} -> {1}'.format(seqmap,newmap['NewMap']))
                 seqmap = newmap['NewMap']
                 gaplen = newmap['GapLen']
                 ctgnum = newmap['CtgNum']
-                COLOUT.write('||{0}>>{1}<<\n'.format(newname,seqmap))
+                #COLOUT.write('||{0}>>{1}<<\n'.format(newname,seqmap))
                 # Convert to sequence
                 newseq = ''
-                cx = 1; fx = 0
+                cx = 1; fx = 0; nx = 0
                 for mapel in seqmap.split('|'):
                     if mapel[:1] == '{': mapel = mapel[1:]
                     if mapel[-1:] == '}': mapel = mapel[:-1]
                     if rje.matchExp('^~(\d+)~$', mapel):
                         newseq = newseq + 'N' * int(rje.matchExp('^~(\d+)~$', mapel)[0])
+                        nx += int(rje.matchExp('^~(\d+)~$', mapel)[0])
+                        cx += 1
+                    elif rje.matchExp('^~(\S+):(\d+)~$',mapel):
+                        newseq = newseq + 'N' * int(rje.matchExp('^~(\S+):(\d+)~$',mapel)[1])
+                        nx += int(rje.matchExp('^~(\S+):(\d+)~$',mapel)[1])
                         cx += 1
                     elif ':' in mapel or mapel in seqdict.keys():
                         mdata = mapel.split(':')
-                        if len(mdata) == 3:
+                        if len(mdata) > 3:
+                            raise ValueError('Problem with region "{0}": check for many edit issues (e.g. misplace inversion).'.format(mapel))
+                        elif len(mdata) == 3:
                             [sname,pos,strand] = mdata
                             [seqi,seqj] = pos.split('-')
+                            if strand not in '-+':
+                                raise ValueError('Problem with region "{0}": strand not recognised!'.format(mapel))
                         else:
                             if len(mdata) == 2:
                                 [sname, strand] = mdata
@@ -1143,8 +1225,12 @@ class GenomeTweak(rje_readcore.ReadCore):
                             [seqi, seqj] = [1, seqin.seqLen(seqdict[sname])]
                         seqi = int(seqi)
                         seqj = int(seqj)
+                        if(seqi > seqj):
+                            raise ValueError('Problem with region "{0}": {1} > {2}'.format(mapel,seqi,seqj))
                         ctgseq = seqin.seqSequence(seqdict[sname])[seqi-1:seqj]
                         ctglen = seqj - seqi + 1
+                        if self.debugging() and 'nnnnnnnnnn' in ctgseq:
+                            self.warnLog('Gaps present in region "{0}"'.format(mapel))
                         if strand == '-':
                             ctgseq = rje_sequence.reverseComplement(ctgseq,rna=False)
                         if len(ctgseq) != ctglen:
@@ -1153,13 +1239,24 @@ class GenomeTweak(rje_readcore.ReadCore):
                         fx += 1
                     elif int(mapel) > 0:
                         newseq = newseq + 'N' * int(mapel)
+                        nx += int(mapel)
                         cx += 1
+                if ctgnum == 0: ctgnum = cx
+                if gaplen == 0: gaplen = nx
+                if len(newseq) < self.getInt('MinLen'): 
+                    self.printLog('#FILT','MinLen Filter: {0} = {1} ({2} chunks; {3} contigs; {4} gap bases)'.format(newname,rje_seqlist.dnaLen(len(newseq)),fx,ctgnum,rje_seqlist.dnaLen(gaplen)))
+                    minx += 1; continue
+                if self.getBool('Collapse'): COLOUT.write('||{0}>>{1}<<\n'.format(newname,seqmap))
+                SEQOUT.write('>{0}\n'.format(newname))
                 SEQOUT.write('{0}\n'.format(newseq))
                 self.printLog('#SCAFF','{0} = {1} ({2} chunks; {3} contigs; {4} gap bases)'.format(newname,rje_seqlist.dnaLen(len(newseq)),fx,ctgnum,rje_seqlist.dnaLen(gaplen)))
             SEQOUT.close()
-            COLOUT.close()
+            if self.getBool('Collapse'): 
+                COLOUT.close()
+                self.warnLog('New gaps within collapsed regions will not be converted. Run with collapse=F if non-gap sequences to be masked.')
             self.printLog('#SEQOUT','{0} sequences saved to {1}'.format(rje.iLen(maplist),self.getStr('SeqOut')))
             self.printLog('#MAPOUT','Collapsed assembly map saved to {0}'.format(colmap))
+            if minx > 0: self.printLog('#FILT','{0} sequences rejected < {1} minlen.'.format(rje.iStr(minx),rje_seqlist.dnaLen(self.getInt('MinLen'))))
             return True
         except:
             self.errorLog(self.zen())
@@ -1331,6 +1428,273 @@ class GenomeTweak(rje_readcore.ReadCore):
             return teldb
         except:
             self.errorLog('GenomeTweak.findTelomeres() error')
+            return None
+#########################################################################################################################
+    ### <5> ### ChromSort methods                                                                                       #
+#########################################################################################################################
+    def chromSort(self):    ### Size sorts the chromosome and generates a map with sorted and renamed sequences.
+        '''
+        Size sorts the chromosome and generates a map with sorted and renamed sequences. This will load the assembly map,
+        calculate the sizes of each sequence, sort big to small, and then rename the sequences. Numbering will be 
+        continuous, but the prefix will change with the type of sequence.      
+        '''
+        try:### ~ [1] ~ Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            maplist = open(self.getStr('MapIn'),'r').read()
+            maplist = ''.join(maplist.split('\n'))
+            seqin = self.seqinObj()
+            seqdict = seqin.seqNameDic()
+            ## ~ [1a] Split on end of sequences ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            maplist = maplist.split('<<')
+            if not maplist[-1].startswith('||'):  maplist = maplist[:-1]
+            self.printLog('#CTGMAP','{0} sequences read from {1}'.format(rje.iLen(maplist),self.getStr('MapIn')))
+
+            ### ~ [2] ~ Generate new map ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            sortlist = []    # List of updated map elements to output
+
+            ## ~ [2a] Generate list of mapseq with lengths for sorting ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            chromnum = 0
+            for m, newseq in enumerate(maplist):
+                [newname, seqmap] = newseq.split('>>')
+                sortlist.append([self.mapLength(seqmap),newname,seqmap])
+                if sortlist[-1][0] >= self.getInt('MinChrom'): chromnum += 1
+            sortlist.sort(reverse=True)
+
+            ## ~ [2b] Generate new names ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            newmaplist = []; minx = 0
+            for m, newseq in enumerate(sortlist):
+                [seqlen,newname,seqmap] = newseq
+                if seqlen < self.getInt('MinLen'):
+                    minx += 1; continue
+                seqtype = 'scf'
+                if seqlen >= self.getInt('MinChrom'): seqtype = 'chr'
+                elif len(seqmap.split('|')) == 1: seqtype = 'ctg'
+                newname = seqtype + rje.preZero(m+1,chromnum)  
+                if self.getStrLC('NewPrefix'):
+                    newname = self.getStr('NewPrefix') + newname.upper()
+                newmaplist.append('||{0}>>{1}'.format(newname,seqmap))
+            seqmap = '<<\n'.join(newmaplist+[''])
+            if minx > 0: self.printLog('#FILT','{0} sequences rejected < {1} minlen.'.format(rje.iStr(minx),rje_seqlist.dnaLen(self.getInt('MinLen'))))
+            ### ~ [3] ~ Output new map ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            mapout = self.baseFile() + '.chrmap.txt'
+            rje.backup(self, mapout)
+            open(mapout, 'w').write(seqmap)
+            self.printLog('\r#MAPOUT', 'Sorted chromosome map output to: {0}.'.format(mapout))
+            self.setStr({'MapIn': mapout})
+            return seqmap
+        except:
+            self.errorLog('Telociraptor.chromSort() error')
+            return None
+#########################################################################################################################
+    ### <6> ### Telomere read extraction                                                                                #
+#########################################################################################################################
+    def teloReads(self):    ### Telomere read extraction.
+        '''
+        Telomere read extraction from gzipped fastq file into fasta file.
+        teloreads=FILE  : Extract telomeric reads from FILE into $BASEFILE.teloreads.fa [None]
+
+        This is an updated version of the approach that uses self.findTelomere(sequence):
+            >> sequence:str = DNA sequence to search
+            << returns dictionary of {'tel5':T/F,'tel3':T/F,'trim5':INT,'trim3':INT,'tel5len':INT,'tel3len':INT}
+
+        I think we can ignore the N trimming but will want to trim the actual telomeres and return a table of the trimmed
+        reads, as well as outputting the reads to a file for assembly etc.
+        '''
+        try:### ~ [1] ~ Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            if not self.db(): self.obj['DB'] = rje_db.Database(self.log,self.cmd_list+['tuplekeys=T'])
+            if self.getInt('TeloSeed') < 0: return self.teloReadsPure()
+            self.printLog('#READS','Input reads for telomeric read extraction: {0}'.format(self.getStr('TeloReads')))
+            tel_forward, tel_reverse = self.getStrUC('TeloFwd'), self.getStrUC('TeloRev')
+            self.printLog('#TEL','Forward (5\') telomere sequence: {0}'.format(tel_forward))
+            self.printLog('#TEL','Reverse (3\') telomere sequence: {0}'.format(tel_reverse))
+            tel_size = self.getInt('TeloSize')
+            tel_rpt = self.getInt('TeloSeed')
+            tel_buffer = self.getInt('TeloBuffer')
+            self.printLog('#TEL','Min. telomere length = {0}; {1} x 6 bp telomere repeat seed'.format(rje_seqlist.dnaLen(tel_size),tel_rpt))
+            self.printLog('#TEL','Telomere repeat buffer length = {0}'.format(rje_seqlist.dnaLen(tel_buffer)))
+            self.printLog('#TEL','Min. telomere read length = {0}'.format(rje_seqlist.dnaLen(self.getInt('MinReadLen'))))
+            teldb = self.db().addEmptyTable('teloreads',['SeqName','SeqLen','Tel5','Tel3','Tel5Len','Tel3Len','TrimLen'],['SeqName'],log=self.debugging())            
+
+            ### ~ [2] ~ Parse the reads and extract ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            outfile = self.baseFile() + '.teloreads.fa'
+            purefile = self.baseFile() + '.puretelo.fa'
+            FASOUT = open(outfile,'w')
+            PUREOUT = open(purefile,'w')
+            telreads = []
+            telre5 = '^(.{0,%d}%s)' % (tel_buffer,tel_forward)
+            telre3 = '(%s.{0,%d})' % (tel_reverse,tel_buffer)
+            ## ~ [2a] ~ Find the reads with the 5' telomeric repeat ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            seedre = tel_forward * tel_rpt
+            if self.getBool('TermSeed'): seedre = '^.{0,%d}%s' % (tel_buffer,seedre)
+            zgrep = 'zgrep -B 1 -E "%s" %s | grep -v -- "--" | sed "s/^@//"' % (seedre,self.getStr('TeloReads'))
+            self.bugPrint(zgrep)
+            FQIN = os.popen(zgrep)
+            fqline = FQIN.readline()
+            fwdtelx = 0; puretelx = 0
+            self.progLog('\r#READS','Parsing 5\' telomere reads -> {0}'.format(rje.iStr(fwdtelx)))
+            while fqline:
+                sname = fqline.strip()
+                fqline = FQIN.readline().strip()
+                inseq = fqline
+                fqtel = self.findTelomere(fqline)
+                self.bugPrint(fqtel)
+                if not fqtel['Tel5'] and not fqtel['Tel3']: continue
+                telreads.append(sname)
+                fqtel['SeqLen'] = len(fqline)   # Full sequence length
+                if fqtel['Tel5']:
+                    while rje.matchExp(telre5,fqline):
+                        trimx = len(rje.matchExp(telre5,fqline)[0])
+                        fqline = fqline[trimx:]
+                fqtel['TrimLen'] = len(fqline)   # Trimmed sequence length
+                fqtel['Tel5Len'] = fqtel['SeqLen'] - fqtel['TrimLen']
+                if fqtel['Tel3']:
+                    while rje.matchExp(telre3,fqline):
+                        trimx = len(rje.matchExp(telre3,fqline)[0])
+                        fqline = fqline[:-trimx]
+                fqtel['Tel3Len'] = fqtel['TrimLen'] - len(fqline)
+                fqtel['TrimLen'] = len(fqline)   # Trimmed sequence length
+                #?# Add trimmed data to seqname in file
+                sname = sname.split()[0]
+                if len(fqline) >= self.getInt('MinReadLen'):
+                    FASOUT.write('>{0}-telotrim\n{1}\n'.format(sname,fqline))
+                    fwdtelx += 1
+                    self.progLog('\r#READS','Parsing 5\' telomere reads -> {0}'.format(rje.iStr(fwdtelx)))
+                elif len(fqline) <= (0.5 * len(inseq)):
+                    PUREOUT.write('>{0}\n{1}\n'.format(sname,inseq))
+                    puretelx += 1
+                fqtel['SeqName'] = sname
+                teldb.addEntry(fqtel)
+
+            FQIN.close()
+            if self.getBool('TermSeed'):
+                self.printLog('\r#READS','{0} stripped 5\' telomere reads output to {1}'.format(rje.iStr(fwdtelx),outfile))
+            else:
+                self.printLog('\r#READS','{0} stripped telomere reads output to {1}'.format(rje.iStr(fwdtelx),outfile))
+                teldb.saveToFile()
+                self.printLog('#TELO','Now try assembling the telomere reads, check read depths and map onto an assembly.')
+                return teldb.entryNum()
+
+            ## ~ [2b] ~ Find the reads with the 3' telomeric repeat ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            seedre = tel_reverse * tel_rpt
+            if self.getBool('TermSeed'): seedre = seedre + '.{0,6}$'
+            FQIN = os.popen('zgrep -B 1 -E "%s" %s | grep -v -- "--" | sed "s/^@//"' % (seedre,self.getStr('TeloReads')))
+            fqline = FQIN.readline()
+            revtelx = 0
+            self.progLog('\r#READS','Parsing 3\' telomere reads -> {0}'.format(rje.iStr(revtelx)))
+            while fqline:
+                sname = fqline.strip()
+                fqline = FQIN.readline().strip()
+                inseq = fqline
+                if sname in telreads: continue  # Already found a 5' telomere
+                fqtel = self.findTelomere(fqline)
+                if not fqtel['Tel5'] and not fqtel['Tel3']: continue
+                telreads.append(sname)
+                fqtel['SeqLen'] = len(fqline)   # Full sequence length
+                if fqtel['Tel5']:
+                    while rje.matchExp(telre5,fqline):
+                        trimx = len(rje.matchExp(telre5,fqline)[0])
+                        fqline = fqline[trimx:]
+                fqtel['TrimLen'] = len(fqline)   # Trimmed sequence length
+                fqtel['Tel5Len'] = fqtel['SeqLen'] - fqtel['TrimLen']
+                if fqtel['Tel3']:
+                    while rje.matchExp(telre3,fqline):
+                        trimx = len(rje.matchExp(telre3,fqline)[0])
+                        fqline = fqline[:-trimx]
+                fqtel['Tel3Len'] = fqtel['TrimLen'] - len(fqline)
+                fqtel['TrimLen'] = len(fqline)   # Trimmed sequence length
+                #?# Add trimmed data to seqname in file
+                sname = sname.split()[0]
+                if len(fqline) >= self.getInt('MinReadLen'):
+                    FASOUT.write('>{0}-telotrim\n{1}\n'.format(sname,fqline))
+                    revtelx += 1
+                    self.progLog('\r#READS','Parsing 5\' telomere reads -> {0}'.format(rje.iStr(revtelx)))
+                elif len(fqline) <= (0.5 * len(inseq)):
+                    PUREOUT.write('>{0}\n{1}\n'.format(sname,inseq))
+                    puretelx += 1
+                fqtel['SeqName'] = sname
+                teldb.addEntry(fqtel)
+            FQIN.close()
+            self.printLog('\r#READS','{0} stripped 3\' telomere reads output to {1}'.format(rje.iStr(revtelx),outfile))
+            self.printLog('\r#READS','{0} pure telomere reads output to {1}'.format(rje.iStr(revtelx),purefile))
+            FASOUT.close()
+            PUREOUT.close()
+
+            teldb.saveToFile()
+            self.printLog('#TELO','Now try assembling the trimmed telomere reads, check read depths and map onto an assembly.')
+            return teldb.entryNum()
+
+        except:
+            self.errorLog('Telociraptor.teloReads() error')
+            return None
+#########################################################################################################################
+    def teloReadsPure(self):    ### Original telomere read extraction with quite strict matching.
+        '''
+        Telomere read extraction from gzipped fastq file into fasta file.
+        teloreads=FILE  : Extract telomeric reads from FILE into $BASEFILE.teloreads.fa [None]
+        '''
+        try:### ~ [1] ~ Setup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            self.printLog('#READS','Input reads for telomeric read extraction: {0}'.format(self.getStr('TeloReads')))
+            tel_forward, tel_reverse = self.getStrUC('TeloFwd'), self.getStrUC('TeloRev')
+            self.printLog('#TEL','Forward (5\') telomere sequence: {0}'.format(tel_forward))
+            self.printLog('#TEL','Reverse (3\') telomere sequence: {0}'.format(tel_reverse))
+            tel_size = self.getInt('TeloSize')
+            tel_rpt = ((tel_size - 1) // 6) + 1
+            self.printLog('#TEL','Min. telomere length = {0}: {1} x 6 bp telomere repeats'.format(rje_seqlist.dnaLen(tel_size),tel_rpt))
+            self.printLog('#TEL','Min. telomere read length = {0}'.format(rje_seqlist.dnaLen(self.getInt('MinReadLen'))))
+
+            ### ~ [2] ~ Parse the reads and extract ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ###
+            outfile = self.baseFile() + '.teloreads.fa'
+            FASOUT = open(outfile,'w')
+            telreads = []
+            ## ~ [2a] ~ Find the reads with the 5' telomeric repeat ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            zgrep = 'zgrep -B 1 -E "^.{0,6}%s" %s | grep -v -- "--" | sed "s/^@//"' % (tel_forward*tel_rpt,self.getStr('TeloReads'))
+            self.bugPrint(zgrep)
+            FQIN = os.popen(zgrep)
+            fqline = FQIN.readline()
+            self.progLog('\r#READS','Parsing 5\' telomere reads -> {0}'.format(rje.iLen(telreads)))
+            while fqline:
+                sname = fqline.strip()
+                fqline = FQIN.readline().strip()
+                while rje.matchExp('^(.{0,6}%s)' % tel_forward,fqline):
+                    trimx = len(rje.matchExp('^(.{0,6}%s)' % tel_forward,fqline)[0])
+                    fqline = fqline[trimx:]
+                while rje.matchExp('(%s.{0,6})$' % tel_reverse,fqline):
+                    trimx = len(rje.matchExp('(%s.{0,6})$' % tel_reverse,fqline)[0])
+                    fqline = fqline[:-trimx]
+                if len(fqline) >= self.getInt('MinReadLen'):
+                    FASOUT.write('>{0}\n{1}\n'.format(sname,fqline))
+                    telreads.append(sname)
+                    self.progLog('\r#READS','Parsing 5\' telomere reads -> {0}'.format(rje.iLen(telreads)))
+            FQIN.close()
+            fwdtelx = len(telreads)
+            self.printLog('\r#READS','{0} stripped 5\' telomere reads output to {1}'.format(rje.iStr(fwdtelx),outfile))
+            ## ~ [2b] ~ Find the reads with the 3' telomeric repeat ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ##
+            FQIN = os.popen('zgrep -B 1 -E "%s.{0,6}$" %s | grep -v -- "--" | sed "s/^@//"' % (tel_reverse*tel_rpt,self.getStr('TeloReads')))
+            fqline = FQIN.readline()
+            self.progLog('\r#READS','Parsing 3\' telomere reads -> {0}'.format(rje.iLen(telreads)))
+            while fqline:
+                sname = fqline.strip()
+                fqline = FQIN.readline().strip()
+                if sname in telreads: continue  # Already found a 5' telomere
+                while rje.matchExp('(%s.{0,6})$' % tel_reverse,fqline):
+                    trimx = len(rje.matchExp('(%s.{0,6})$' % tel_reverse,fqline)[0])
+                    fqline = fqline[:-trimx]
+                while rje.matchExp('^(.{0,6}%s)' % tel_forward,fqline):
+                    trimx = len(rje.matchExp('^(.{0,6}%s)' % tel_forward,fqline)[0])
+                    fqline = fqline[trimx:]
+                if len(fqline) >= self.getInt('MinReadLen'):
+                    FASOUT.write('>{0}\n{1}\n'.format(sname,fqline))
+                    telreads.append(sname)
+                    self.progLog('\r#READS','Parsing 5\' telomere reads -> {0}'.format(rje.iLen(telreads)))
+            FQIN.close()
+            revtelx = len(telreads) - fwdtelx
+            self.printLog('\r#READS','{0} stripped 3\' telomere reads output to {1}'.format(rje.iStr(revtelx),outfile))
+            FASOUT.close()
+
+            self.printLog('#TELO','Now try assembling the telomere reads, check read depths and map onto an assembly.')
+            return True
+
+        except:
+            self.errorLog('Telociraptor.teloReads() error')
             return None
 #########################################################################################################################
 ### End of SECTION II: GenomeTweak Class                                                                                #
